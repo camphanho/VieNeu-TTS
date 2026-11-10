@@ -219,6 +219,16 @@ public actor VieNeuTTS {
         try await voiceCloner.clone(from: audioURL, name: name)
     }
 
+    /// Clones a new voice profile from raw audio samples.
+    public func cloneVoice(from samples: [Float], sampleRate: Int = 24000, name: String) async throws -> VoiceProfile {
+        try await voiceCloner.clone(from: samples, sampleRate: sampleRate, name: name)
+    }
+
+    /// Clones a new voice profile from an AudioBuffer.
+    public func cloneVoice(from buffer: AudioBuffer, name: String) async throws -> VoiceProfile {
+        try await voiceCloner.clone(from: buffer.samples, sampleRate: buffer.sampleRate, name: name)
+    }
+
     // MARK: - Internal Chunk Pipeline
 
     /// Synthesizes a single text chunk into an `AudioBuffer`.

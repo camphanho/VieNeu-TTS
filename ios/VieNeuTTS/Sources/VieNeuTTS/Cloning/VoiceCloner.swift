@@ -37,11 +37,30 @@ public actor VoiceCloner {
     /// - Throws: `VieNeuError.referenceAudioTooShortOrSilent` or neural engine inference errors.
     public func clone(from audioURL: URL, name: String) async throws -> VoiceProfile {
         let rawSamples = try MelFilterbank.convertToMono24kHz(from: audioURL)
+        return try await clone(from: rawSamples, sampleRate: 24000, name: name)
+    }
+
+    /// Enrolls a new voice profile from raw audio waveform samples.
+    ///
+    /// - Parameters:
+    ///   - rawSamples: Audio waveform samples.
+    ///   - sampleRate: Sample rate in Hz (automatically resampled to 24 kHz if needed).
+    ///   - name: Name or identifier to assign to the enrolled voice profile.
+    /// - Returns: A populated `VoiceProfile` ready for speech synthesis.
+    /// - Throws: `VieNeuError.referenceAudioTooShortOrSilent` or neural engine inference errors.
+    public func clone(from rawSamples: [Float], sampleRate: Int = 24000, name: String) async throws -> VoiceProfile {
         guard !rawSamples.isEmpty else {
             throw VieNeuError.referenceAudioTooShortOrSilent
         }
 
-        let trimmedSamples = Self.trimSilence(samples: rawSamples, sampleRate: 24000)
+        let inputSamples: [Float]
+        if sampleRate != 24000 {
+            inputSamples = MelFilterbank.resample(samples: rawSamples, from: sampleRate, to: 24000)
+        } else {
+            inputSamples = rawSamples
+        }
+
+        let trimmedSamples = Self.trimSilence(samples: inputSamples, sampleRate: 24000)
         let duration = Float(trimmedSamples.count) / 24000.0
         let rms = Self.calculateRMS(trimmedSamples)
 
@@ -64,16 +83,25 @@ public actor VoiceCloner {
         // 2. Run speaker encoder to extract 192-d x-vector
         let speakerEmbedding = try await onnxEngine.runSpeakerEncoder(mel: mel)
 
-        // 3. Run acoustic codec encoder to extract reference latents
-        let latents = try await onnxEngine.runCodecEncoder(samples: referenceSamples)
+        // 3. Run acoustic codec encoder to extract reference latents from first 5.0 seconds
+        let ref5sSamples = Array(referenceSamples.prefix(Int(24000.0 * 5.0)))
+        let latents = try await onnxEngine.runCodecEncoder(samples: ref5sSamples)
 
-        // 4. Normalize [T, 24] codec latents and group six frames into [ceil(T / 6), 144].
-        // v3 Nano's default constants use unit scale and normalization when constants.npz is unavailable.
-        let normalizedLatents = Self.normalizeLatent(latents)
+        // 4. Normalize [T, 24] codec latents using model constants, group by 6 frames,
+        // and crop to min(5.0 * 15.625, 140) = 78 frames as in Python reference.
+        let constants = ModelConstants.load()
+        let normalizedLatents = Self.normalizeLatent(
+            latents,
+            mean: constants.latent_mean,
+            standardDeviation: constants.latent_std,
+            scale: constants.latent_scale
+        )
         let groupedLatents = Self.groupLatent(normalizedLatents)
+        let maxRefFrames = 78
+        let croppedLatents = Array(groupedLatents.prefix(maxRefFrames))
 
         // 5. Run reference style encoder to extract style tokens (shape: [50, 256]).
-        let styleTokens = try await onnxEngine.runReferenceEncoder(latents: groupedLatents)
+        let styleTokens = try await onnxEngine.runReferenceEncoder(latents: croppedLatents)
 
         return VoiceProfile(
             name: name,

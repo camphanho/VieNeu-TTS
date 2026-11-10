@@ -358,6 +358,38 @@ public final class TTSViewModel: ObservableObject {
         }
     }
 
+    /// Sets an external reference audio file URL (e.g. from file picker or documents).
+    public func setReferenceAudioFile(_ sourceURL: URL) {
+        let ext = sourceURL.pathExtension.isEmpty ? "wav" : sourceURL.pathExtension
+        let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("imported_ref_\(UUID().uuidString).\(ext)")
+        do {
+            if FileManager.default.fileExists(atPath: tempURL.path) {
+                try? FileManager.default.removeItem(at: tempURL)
+            }
+            try FileManager.default.copyItem(at: sourceURL, to: tempURL)
+            self.recordedAudioURL = tempURL
+            #if canImport(AVFoundation)
+            if let file = try? AVAudioFile(forReading: tempURL) {
+                self.recordingDuration = Double(file.length) / file.fileFormat.sampleRate
+            } else {
+                self.recordingDuration = 5.0
+            }
+            #else
+            self.recordingDuration = 5.0
+            #endif
+            self.statusMessage = "Đã chọn tệp: \(sourceURL.lastPathComponent) (\(String(format: "%.1f", recordingDuration))s)"
+            self.errorMessage = nil
+        } catch {
+            self.errorMessage = "Không thể đọc tệp âm thanh: \(error.localizedDescription)"
+        }
+    }
+
+    /// Enrolls a new custom voice profile from any specified audio file URL.
+    public func cloneVoice(from fileURL: URL, name: String) async {
+        setReferenceAudioFile(fileURL)
+        await cloneVoiceFromRecording(name: name)
+    }
+
     // MARK: - Audio Recording
 
     /// Starts recording a voice sample from the device microphone (target: 3 to 8 seconds).

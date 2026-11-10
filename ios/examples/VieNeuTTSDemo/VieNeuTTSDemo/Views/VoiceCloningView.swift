@@ -2,6 +2,10 @@
 import SwiftUI
 import VieNeuTTS
 
+#if canImport(UniformTypeIdentifiers)
+import UniformTypeIdentifiers
+#endif
+
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -13,6 +17,7 @@ public struct VoiceCloningView: View {
     @State private var voiceName: String = ""
     @State private var exportedShareURL: URL?
     @State private var isShowingShareSheet: Bool = false
+    @State private var isShowingFileImporter: Bool = false
     @FocusState private var isNameFieldFocused: Bool
 
     public init(viewModel: TTSViewModel) {
@@ -46,6 +51,25 @@ public struct VoiceCloningView: View {
                 ActivityView(activityItems: [shareURL])
             }
         }
+        #if canImport(UniformTypeIdentifiers)
+        .fileImporter(
+            isPresented: $isShowingFileImporter,
+            allowedContentTypes: [.audio],
+            allowsMultipleSelection: false
+        ) { result in
+            switch result {
+            case .success(let urls):
+                guard let url = urls.first else { return }
+                let canAccess = url.startAccessingSecurityScopedResource()
+                defer {
+                    if canAccess { url.stopAccessingSecurityScopedResource() }
+                }
+                viewModel.setReferenceAudioFile(url)
+            case .failure(let error):
+                viewModel.errorMessage = "Không thể chọn tệp: \(error.localizedDescription)"
+            }
+        }
+        #endif
     }
 
     // MARK: - Subviews
@@ -138,6 +162,29 @@ public struct VoiceCloningView: View {
                 }
             }
             .padding(.vertical, 8)
+
+            // Or choose existing audio file
+            #if canImport(UniformTypeIdentifiers)
+            Button(action: {
+                isShowingFileImporter = true
+            }) {
+                HStack(spacing: 8) {
+                    Image(systemName: "folder.badge.plus")
+                        .font(.subheadline)
+                    Text("Hoặc chọn tệp âm thanh có sẵn...")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                }
+                .foregroundColor(.accentColor)
+                .padding(.vertical, 8)
+                .padding(.horizontal, 16)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(Color.accentColor.opacity(0.12))
+                )
+            }
+            .padding(.top, 4)
+            #endif
         }
         .padding(16)
         .background(

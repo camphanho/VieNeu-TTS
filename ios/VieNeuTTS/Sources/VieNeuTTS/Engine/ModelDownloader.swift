@@ -16,7 +16,10 @@ public actor ModelDownloader {
         "vector_estimator.onnx",
         "codec_decoder.onnx",
         "config.json",
-        "constants.npz"
+        "constants.npz",
+        "speaker_encoder.onnx",
+        "codec_encoder.onnx",
+        "reference_encoder.onnx"
     ]
 
     /// Repository identifier (e.g. `pnnbao-ump/VieNeu-TTS-v3-Nano`).

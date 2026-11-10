@@ -316,7 +316,8 @@ public actor ONNXEngine: ONNXInferenceEngine {
         }
         let frames = melFilterbank.count
         let melTensor = try ORTTensorHelper.createTensor(from: melFilterbank, shape: [1, NSNumber(value: frames), 80])
-        let outputs = try speakerSession!.run(withInputs: ["feats": melTensor], outputNames: Set(try speakerSession!.outputNames()), runOptions: nil)
+        let inputName = (try? speakerSession!.inputNames())?.first ?? "input"
+        let outputs = try speakerSession!.run(withInputs: [inputName: melTensor], outputNames: Set(try speakerSession!.outputNames()), runOptions: nil)
         guard let first = outputs.values.first else {
             throw VieNeuError.synthesisFailed("Speaker encoder produced no outputs.")
         }
@@ -333,7 +334,8 @@ public actor ONNXEngine: ONNXInferenceEngine {
             codecEncSession = try ORTSession(env: env!, modelPath: url.path, sessionOptions: sessionOptions!)
         }
         let audioTensor = try ORTTensorHelper.createTensor(from: audio, shape: [1, 1, NSNumber(value: audio.count)])
-        let outputs = try codecEncSession!.run(withInputs: ["x": audioTensor], outputNames: Set(try codecEncSession!.outputNames()), runOptions: nil)
+        let inputName = (try? codecEncSession!.inputNames())?.first ?? "wav"
+        let outputs = try codecEncSession!.run(withInputs: [inputName: audioTensor], outputNames: Set(try codecEncSession!.outputNames()), runOptions: nil)
         guard let first = outputs.values.first else {
             throw VieNeuError.synthesisFailed("Codec encoder produced no outputs.")
         }

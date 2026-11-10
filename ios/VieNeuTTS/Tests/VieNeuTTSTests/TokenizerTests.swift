@@ -152,4 +152,12 @@ final class TokenizerTests: XCTestCase {
             XCTAssertTrue(id >= 0 && id <= 80, "Token ID \(id) is outside default vocab range")
         }
     }
+
+    func testCombiningDiacriticsScalarsPreserved() {
+        let tokenizer = PhonemeTokenizer()
+        // Dental t: 't' (id 31) + combining dental diacritic '\u{032A}' / '̪' (id 63)
+        let phonemes = "t\u{032A}"
+        let ids = tokenizer.encode(phonemes: phonemes)
+        XCTAssertEqual(ids, [1, 31, 63, 2])
+    }
 }

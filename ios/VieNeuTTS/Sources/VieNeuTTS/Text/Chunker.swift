@@ -105,7 +105,18 @@ public struct Chunker {
     }
 
     /// Splits a single paragraph into individual sentences while respecting quotes and decimal numbers.
+    /// If quotes or parentheses are unbalanced, falls back to splitting without quote protection.
     private static func splitParagraphIntoSentences(_ paragraph: String) -> [String] {
+        let (sentences, isBalanced) = scanSentences(paragraph, quoteAware: true)
+        if !isBalanced {
+            let (fallbackSentences, _) = scanSentences(paragraph, quoteAware: false)
+            return fallbackSentences.isEmpty ? [cleanWhitespace(paragraph)] : fallbackSentences
+        }
+        return sentences.isEmpty ? [cleanWhitespace(paragraph)] : sentences
+    }
+
+    /// Scans a paragraph and splits it at sentence boundaries, optionally respecting quotes and brackets.
+    private static func scanSentences(_ paragraph: String, quoteAware: Bool) -> (sentences: [String], isBalanced: Bool) {
         var sentences: [String] = []
         let chars = Array(paragraph)
         let n = chars.count
@@ -118,13 +129,19 @@ public struct Chunker {
         while i < n {
             let ch = chars[i]
 
-            if ch == "\"" || ch == "“" || ch == "”" {
-                inQuote.toggle()
-            } else if ch == "(" || ch == "[" || ch == "{" {
-                parenDepth += 1
-            } else if ch == ")" || ch == "]" || ch == "}" {
-                if parenDepth > 0 { parenDepth -= 1 }
-            } else if sentenceEndCharacters.contains(ch) && !inQuote && parenDepth == 0 {
+            if quoteAware {
+                if ch == "\"" || ch == "“" || ch == "”" {
+                    inQuote.toggle()
+                } else if ch == "(" || ch == "[" || ch == "{" {
+                    parenDepth += 1
+                } else if ch == ")" || ch == "]" || ch == "}" {
+                    if parenDepth > 0 { parenDepth -= 1 }
+                }
+            }
+
+            let canBreak = !quoteAware || (!inQuote && parenDepth == 0)
+
+            if sentenceEndCharacters.contains(ch) && canBreak {
                 // Check if this might be a decimal number (e.g. 3.5 or 8.30)
                 let isPrecededByDigit = (i > 0 && chars[i - 1].isNumber)
                 let isFollowedByDigit = (i + 1 < n && chars[i + 1].isNumber)
@@ -169,7 +186,8 @@ public struct Chunker {
             }
         }
 
-        return sentences.isEmpty ? [cleanWhitespace(paragraph)] : sentences
+        let isBalanced = (!inQuote && parenDepth == 0)
+        return (sentences, isBalanced)
     }
 
     /// Normalizes and collapses repeated whitespace characters into single spaces.

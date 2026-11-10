@@ -20,7 +20,7 @@ public enum TokenizerError: Error, LocalizedError, Equatable, Sendable {
 }
 
 /// Tokenizer mapping Vietnamese phonemes and emotion tags to token IDs for v3 Nano.
-public final class PhonemeTokenizer: @unchecked Sendable {
+public final class PhonemeTokenizer: Sendable {
 
     /// Vocabulary map from phoneme / character string to token ID.
     public let vocab: [String: Int64]
@@ -246,9 +246,9 @@ public final class PhonemeTokenizer: @unchecked Sendable {
         // 3. Bracket with bosId and eosId, mapping characters to vocab token IDs
         var tokenIDs: [Int64] = [bosId]
 
-        for character in processed {
-            let charString = String(character)
-            if let id = vocab[charString] {
+        for scalar in processed.unicodeScalars {
+            let scalarString = String(scalar)
+            if let id = vocab[scalarString] {
                 tokenIDs.append(id)
             }
             // Out-of-vocab characters are omitted

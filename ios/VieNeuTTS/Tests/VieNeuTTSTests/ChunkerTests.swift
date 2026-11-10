@@ -104,4 +104,12 @@ final class ChunkerTests: XCTestCase {
         XCTAssertEqual(chunks[0].text, "Hôm nay trời đẹp.")
         XCTAssertEqual(chunks[1].text, "Ngày mai cũng vậy.")
     }
+
+    func testUnbalancedQuotesFallBackToSplitting() {
+        // An unclosed quote should not swallow all subsequent sentences into one huge chunk
+        let text = "Một dấu nháy mở \" nhưng không bao giờ đóng. Câu thứ hai vẫn phải được tách! Và câu thứ ba nữa?"
+        let chunks = Chunker.splitToChunks(text, maxChars: 40)
+        XCTAssertGreaterThan(chunks.count, 1)
+        XCTAssertTrue(chunks.contains { $0.text.contains("Câu thứ hai") })
+    }
 }

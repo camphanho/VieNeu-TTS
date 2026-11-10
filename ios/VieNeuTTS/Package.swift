@@ -17,14 +17,14 @@ var packageDependencies: [Package.Dependency] = []
 var vieNeuDependencies: [Target.Dependency] = []
 var targets: [Target] = []
 
-#if os(macOS) || os(iOS) || os(tvOS) || os(watchOS) || os(visionOS)
-packageDependencies.append(
-    .package(url: "https://github.com/microsoft/onnxruntime-swift-package-manager", from: "1.20.0")
-)
-vieNeuDependencies.append(
-    .product(name: "onnxruntime", package: "onnxruntime-swift-package-manager")
-)
-#endif
+if hasXCFramework {
+    packageDependencies.append(
+        .package(url: "https://github.com/microsoft/onnxruntime-swift-package-manager", from: "1.20.0")
+    )
+    vieNeuDependencies.append(
+        .product(name: "onnxruntime", package: "onnxruntime-swift-package-manager")
+    )
+}
 
 if hasXCFramework {
     targets.append(

@@ -1,6 +1,8 @@
 import Foundation
 
-#if canImport(onnxruntime)
+#if canImport(OnnxRuntimeBindings)
+import OnnxRuntimeBindings
+#elseif canImport(onnxruntime)
 import onnxruntime
 #endif
 
@@ -129,7 +131,7 @@ public actor ONNXEngine: ONNXInferenceEngine {
     public let modelProvider: ModelProvider
     public let intraOpThreads: Int
 
-    #if canImport(onnxruntime)
+    #if canImport(OnnxRuntimeBindings) || canImport(onnxruntime)
     private var env: ORTEnv?
     private var sessionOptions: ORTSessionOptions?
 
@@ -153,16 +155,15 @@ public actor ONNXEngine: ONNXInferenceEngine {
         self.modelProvider = modelProvider
         self.intraOpThreads = intraOpThreads
 
-        #if canImport(onnxruntime)
+        #if canImport(OnnxRuntimeBindings) || canImport(onnxruntime)
         let ortEnv = try ORTEnv(loggingLevel: .warning)
         self.env = ortEnv
 
         let opts = try ORTSessionOptions()
         let resolvedThreads = intraOpThreads > 0 ? intraOpThreads : min(max(ProcessInfo.processInfo.processorCount / 2, 1), 8)
         try opts.setIntraOpNumThreads(Int32(resolvedThreads))
-        try opts.setInterOpNumThreads(1)
         try opts.setGraphOptimizationLevel(.all)
-        try? opts.addConfigEntry(byKey: "session.intra_op.allow_spinning", value: "0")
+        try? opts.addConfigEntry(withKey: "session.intra_op.allow_spinning", value: "0")
         self.sessionOptions = opts
 
         let textURL = try modelProvider.modelURL(for: "text_encoder.onnx")
@@ -187,7 +188,7 @@ public actor ONNXEngine: ONNXInferenceEngine {
     }
 
     public func runTextEncoder(tokenIDs: [Int64], style: [[Float]]) async throws -> (ctx: [[Float]], mask: [Bool]) {
-        #if canImport(onnxruntime)
+        #if canImport(OnnxRuntimeBindings) || canImport(onnxruntime)
         guard let session = textSession else {
             throw VieNeuError.synthesisFailed("Text encoder session not loaded.")
         }
@@ -199,7 +200,7 @@ public actor ONNXEngine: ONNXInferenceEngine {
         )
         let outputs = try session.run(
             withInputs: ["ids": idsTensor, "style": styleTensor],
-            outputNames: nil,
+            outputNames: Set(try session.outputNames()),
             runOptions: nil
         )
         guard let firstOutput = outputs.values.first else {
@@ -225,7 +226,7 @@ public actor ONNXEngine: ONNXInferenceEngine {
     }
 
     public func runDurationPredictor(ctx: [[Float]], mask: [Bool], speakerEmbedding: [Float], speed: Float) async throws -> Int {
-        #if canImport(onnxruntime)
+        #if canImport(OnnxRuntimeBindings) || canImport(onnxruntime)
         guard let session = durationSession else {
             throw VieNeuError.synthesisFailed("Duration predictor session not loaded.")
         }
@@ -237,7 +238,7 @@ public actor ONNXEngine: ONNXInferenceEngine {
 
         let outputs = try session.run(
             withInputs: ["ctx": ctxTensor, "ctx_mask": maskTensor, "spk": spkTensor],
-            outputNames: nil,
+            outputNames: Set(try session.outputNames()),
             runOptions: nil
         )
         guard let firstOutput = outputs.values.first,
@@ -251,7 +252,7 @@ public actor ONNXEngine: ONNXInferenceEngine {
     }
 
     public func runVectorEstimator(x: [[Float]], t: Float, ctx: [[Float]], mask: [Bool], speakerEmbedding: [Float], style: [[Float]]) async throws -> [[Float]] {
-        #if canImport(onnxruntime)
+        #if canImport(OnnxRuntimeBindings) || canImport(onnxruntime)
         guard let session = vectorSession else {
             throw VieNeuError.synthesisFailed("Vector estimator session not loaded.")
         }
@@ -273,7 +274,7 @@ public actor ONNXEngine: ONNXInferenceEngine {
                 "spk": spkTensor,
                 "style": styleTensor
             ],
-            outputNames: nil,
+            outputNames: Set(try session.outputNames()),
             runOptions: nil
         )
         guard let firstOutput = outputs.values.first else {
@@ -286,7 +287,7 @@ public actor ONNXEngine: ONNXInferenceEngine {
     }
 
     public func runCodecDecoder(latents: [[Float]]) async throws -> [Float] {
-        #if canImport(onnxruntime)
+        #if canImport(OnnxRuntimeBindings) || canImport(onnxruntime)
         guard let session = decoderSession else {
             throw VieNeuError.synthesisFailed("Codec decoder session not loaded.")
         }
@@ -295,7 +296,7 @@ public actor ONNXEngine: ONNXInferenceEngine {
         let xTensor = try ORTTensorHelper.createTransposedTensor(from: latents, shape: [1, NSNumber(value: dim), NSNumber(value: frames)])
         let outputs = try session.run(
             withInputs: ["x": xTensor],
-            outputNames: nil,
+            outputNames: Set(try session.outputNames()),
             runOptions: nil
         )
         guard let firstOutput = outputs.values.first else {
@@ -308,14 +309,14 @@ public actor ONNXEngine: ONNXInferenceEngine {
     }
 
     public func runSpeakerEncoder(melFilterbank: [[Float]]) async throws -> [Float] {
-        #if canImport(onnxruntime)
+        #if canImport(OnnxRuntimeBindings) || canImport(onnxruntime)
         if speakerSession == nil {
             let url = try modelProvider.modelURL(for: "speaker_encoder.onnx")
             speakerSession = try ORTSession(env: env!, modelPath: url.path, sessionOptions: sessionOptions!)
         }
         let frames = melFilterbank.count
         let melTensor = try ORTTensorHelper.createTensor(from: melFilterbank, shape: [1, NSNumber(value: frames), 80])
-        let outputs = try speakerSession!.run(withInputs: ["feats": melTensor], outputNames: nil, runOptions: nil)
+        let outputs = try speakerSession!.run(withInputs: ["feats": melTensor], outputNames: Set(try speakerSession!.outputNames()), runOptions: nil)
         guard let first = outputs.values.first else {
             throw VieNeuError.synthesisFailed("Speaker encoder produced no outputs.")
         }
@@ -326,13 +327,13 @@ public actor ONNXEngine: ONNXInferenceEngine {
     }
 
     public func runCodecEncoder(audio: [Float]) async throws -> [[Float]] {
-        #if canImport(onnxruntime)
+        #if canImport(OnnxRuntimeBindings) || canImport(onnxruntime)
         if codecEncSession == nil {
             let url = try modelProvider.modelURL(for: "codec_encoder.onnx")
             codecEncSession = try ORTSession(env: env!, modelPath: url.path, sessionOptions: sessionOptions!)
         }
         let audioTensor = try ORTTensorHelper.createTensor(from: audio, shape: [1, 1, NSNumber(value: audio.count)])
-        let outputs = try codecEncSession!.run(withInputs: ["x": audioTensor], outputNames: nil, runOptions: nil)
+        let outputs = try codecEncSession!.run(withInputs: ["x": audioTensor], outputNames: Set(try codecEncSession!.outputNames()), runOptions: nil)
         guard let first = outputs.values.first else {
             throw VieNeuError.synthesisFailed("Codec encoder produced no outputs.")
         }
@@ -346,7 +347,7 @@ public actor ONNXEngine: ONNXInferenceEngine {
     }
 
     public func runReferenceEncoder(refCodes: [[Float]]) async throws -> [[Float]] {
-        #if canImport(onnxruntime)
+        #if canImport(OnnxRuntimeBindings) || canImport(onnxruntime)
         if refSession == nil {
             let url = try modelProvider.modelURL(for: "reference_encoder.onnx")
             refSession = try ORTSession(env: env!, modelPath: url.path, sessionOptions: sessionOptions!)
@@ -355,7 +356,7 @@ public actor ONNXEngine: ONNXInferenceEngine {
         let dim = refCodes.first?.count ?? 256
         let refTensor = try ORTTensorHelper.createTransposedTensor(from: refCodes, shape: [1, NSNumber(value: dim), NSNumber(value: frames)])
         let maskTensor = try ORTTensorHelper.createTensor(from: Array(repeating: true, count: frames), shape: [1, NSNumber(value: frames)])
-        let outputs = try refSession!.run(withInputs: ["ref": refTensor, "ref_mask": maskTensor], outputNames: nil, runOptions: nil)
+        let outputs = try refSession!.run(withInputs: ["ref": refTensor, "ref_mask": maskTensor], outputNames: Set(try refSession!.outputNames()), runOptions: nil)
         guard let first = outputs.values.first else {
             throw VieNeuError.synthesisFailed("Reference encoder produced no outputs.")
         }
@@ -416,7 +417,7 @@ public enum TensorLayoutHelper {
 
 // MARK: - ONNX Tensor Helpers
 
-#if canImport(onnxruntime)
+#if canImport(OnnxRuntimeBindings) || canImport(onnxruntime)
 enum ORTTensorHelper {
     static func createTensor(from array: [Float], shape: [NSNumber]) throws -> ORTValue {
         var mutableArray = array
@@ -448,14 +449,14 @@ enum ORTTensorHelper {
     static func createTensor(from array: [Bool], shape: [NSNumber]) throws -> ORTValue {
         var uint8Array = array.map { $0 ? UInt8(1) : UInt8(0) }
         let data = NSMutableData(bytes: &uint8Array, length: uint8Array.count * MemoryLayout<UInt8>.size)
-        return try ORTValue(tensorData: data, elementType: .bool, shape: shape)
+        return try ORTValue(tensorData: data, elementType: .uInt8, shape: shape)
     }
 
     static func extractFloatArray(from value: ORTValue) throws -> [Float] {
         let data = try value.tensorData()
         let count = data.length / MemoryLayout<Float>.size
         var result = [Float](repeating: 0, count: count)
-        _ = result.withUnsafeMutableBytes { ptr in
+        result.withUnsafeMutableBytes { ptr in
             data.getBytes(ptr.baseAddress!, length: data.length)
         }
         return result
@@ -465,7 +466,7 @@ enum ORTTensorHelper {
         let data = try value.tensorData()
         let count = data.length / MemoryLayout<Int64>.size
         var result = [Int64](repeating: 0, count: count)
-        _ = result.withUnsafeMutableBytes { ptr in
+        result.withUnsafeMutableBytes { ptr in
             data.getBytes(ptr.baseAddress!, length: data.length)
         }
         return result

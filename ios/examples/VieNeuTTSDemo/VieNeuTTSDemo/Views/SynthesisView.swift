@@ -63,39 +63,55 @@ public struct SynthesisView: View {
     // MARK: - Subviews
 
     private var headerSection: some View {
-        HStack(alignment: .top, spacing: 14) {
-            Image(systemName: "waveform.circle.fill")
-                .resizable()
-                .scaledToFit()
-                .frame(width: 36, height: 36)
-                .foregroundColor(.accentColor)
+        VStack(spacing: 12) {
+            HStack(alignment: .top, spacing: 14) {
+                Image(systemName: "waveform.circle.fill")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 36, height: 36)
+                    .foregroundColor(.accentColor)
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text("VieNeu-TTS v3 Nano")
-                    .font(.headline)
-                    .fontWeight(.bold)
-                Text(viewModel.statusMessage)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-            Spacer()
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(viewModel.selectedMode == .v3turbo ? "VieNeu-TTS v3 Turbo (48 kHz)" : "VieNeu-TTS v3 Nano (24 kHz)")
+                        .font(.headline)
+                        .fontWeight(.bold)
+                    Text(viewModel.statusMessage)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                Spacer()
 
-            // Ready Badge
-            HStack(spacing: 4) {
-                Circle()
-                    .fill(viewModel.isReady ? Color.green : Color.orange)
-                    .frame(width: 8, height: 8)
-                Text(viewModel.isReady ? "Sẵn sàng" : "Đang tải")
-                    .font(.caption2)
-                    .fontWeight(.semibold)
-                    .foregroundColor(viewModel.isReady ? .green : .orange)
+                // Ready Badge
+                HStack(spacing: 4) {
+                    Circle()
+                        .fill(viewModel.isReady ? Color.green : Color.orange)
+                        .frame(width: 8, height: 8)
+                    Text(viewModel.isReady ? "Sẵn sàng" : "Đang tải")
+                        .font(.caption2)
+                        .fontWeight(.semibold)
+                        .foregroundColor(viewModel.isReady ? .green : .orange)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(
+                    Capsule()
+                        .fill(viewModel.isReady ? Color.green.opacity(0.12) : Color.orange.opacity(0.12))
+                )
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(
-                Capsule()
-                    .fill(viewModel.isReady ? Color.green.opacity(0.12) : Color.orange.opacity(0.12))
-            )
+
+            // Architecture Mode Switcher
+            Picker("Chế độ", selection: Binding(
+                get: { viewModel.selectedMode },
+                set: { newMode in
+                    Task {
+                        await viewModel.setMode(newMode)
+                    }
+                }
+            )) {
+                Text("v3 Nano (24 kHz)").tag(VieNeuModelMode.v3nano)
+                Text("v3 Turbo (48 kHz)").tag(VieNeuModelMode.v3turbo)
+            }
+            .pickerStyle(.segmented)
         }
         .padding(14)
         .background(

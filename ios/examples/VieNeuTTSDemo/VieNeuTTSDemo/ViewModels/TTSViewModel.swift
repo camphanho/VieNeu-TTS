@@ -47,6 +47,9 @@ public final class TTSViewModel: ObservableObject {
     /// The currently selected voice profile for speech synthesis.
     @Published public var selectedVoice: VoiceProfile
 
+    /// Selected model architecture mode (.v3nano 24kHz or .v3turbo 48kHz).
+    @Published public var selectedMode: VieNeuModelMode = .v3nano
+
     /// All available preset and user-cloned voice profiles.
     @Published public var availableVoices: [VoiceProfile] = []
 
@@ -154,6 +157,7 @@ public final class TTSViewModel: ObservableObject {
 
             self.modelProvider = provider
             let config = VieNeuConfig(
+                mode: selectedMode,
                 modelProvider: provider,
                 eulerSteps: eulerSteps,
                 speed: speed
@@ -609,16 +613,28 @@ public final class TTSViewModel: ObservableObject {
         }
     }
 
+    /// Changes the active synthesis model architecture (.v3nano or .v3turbo).
+    public func setMode(_ newMode: VieNeuModelMode) async {
+        guard newMode != selectedMode else { return }
+        selectedMode = newMode
+        stopPlayback()
+        if let currentTTS = tts {
+            _ = try? await prepareTTSInstance(reusing: currentTTS)
+            statusMessage = "Đã chuyển sang \(newMode == .v3turbo ? "v3 Turbo (48 kHz)" : "v3 Nano (24 kHz)")"
+        }
+    }
+
     // MARK: - Private Helpers
 
     /// Reuses existing ONNX sessions while updating synthesis parameters like eulerSteps and speed.
     private func prepareTTSInstance(reusing existing: VieNeuTTS) async throws -> VieNeuTTS {
-        if existing.config.eulerSteps == eulerSteps && abs(existing.config.speed - speed) < 1e-4 {
+        if existing.config.mode == selectedMode && existing.config.eulerSteps == eulerSteps && abs(existing.config.speed - speed) < 1e-4 {
             return existing
         }
 
         let engine = await existing.engine
         let newConfig = VieNeuConfig(
+            mode: selectedMode,
             modelProvider: existing.config.modelProvider,
             eulerSteps: eulerSteps,
             speed: speed,

@@ -142,7 +142,7 @@ public actor V3TurboEngine: V3TurboInferenceEngine {
         #if canImport(OnnxRuntimeBindings) || canImport(onnxruntime)
         guard let prefillSess = prefillSession,
               let decodeSess = decodeSession,
-              let acousticSess = acousticSession,
+              let _ = acousticSession,
               let codecDecSess = codecDecoderSession else {
             // Fallback for tests when sessions aren't loaded on disk
             let count = max(2, min(maxNewFrames, 10))
@@ -194,7 +194,7 @@ public actor V3TurboEngine: V3TurboInferenceEngine {
 
             // Run acoustic step
             var frameCodes = [Int32]()
-            for ch in 0..<numCodebooks {
+            for _ in 0..<numCodebooks {
                 let logits = [Float](repeating: 0.0, count: 1024)
                 let sampleToken = V3TurboSampler.sample(
                     logits: logits,

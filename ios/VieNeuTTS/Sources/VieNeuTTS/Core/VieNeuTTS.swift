@@ -27,6 +27,12 @@ public actor VieNeuTTS {
     /// Thread-safe cached preset voice profiles.
     private let presetVoiceStore = PresetVoiceStore()
 
+    /// Precomputed unconditional context for Classifier-Free Guidance (CFG).
+    private var nullCtx: [[Float]] = []
+    private var nullMask: [Bool] = []
+    private var nullSpeaker: [Float] = []
+    private var nullStyle: [[Float]] = []
+
     /// Initializes a new `VieNeuTTS` synthesis facade.
     ///
     /// - Parameter config: Configuration providing model files and synthesis knobs.
@@ -40,6 +46,9 @@ public actor VieNeuTTS {
             self.engine = try ONNXEngine(modelProvider: config.modelProvider)
         }
 
+        if let dictPath = VieNeuResources.url(for: "sea_g2p.bin")?.path {
+            _ = SeaG2P.setDictionaryPath(dictPath)
+        }
         self.seaG2P = SeaG2P()
 
         if let configURL = try? config.modelProvider.configURL(),
@@ -47,6 +56,26 @@ public actor VieNeuTTS {
             self.tokenizer = customTokenizer
         } else {
             self.tokenizer = PhonemeTokenizer()
+        }
+
+        // Load conditioning constants
+        let constantsDir = try? config.modelProvider.constantsURL().deletingLastPathComponent()
+        let constants = ModelConstants.load(from: constantsDir)
+        self.nullSpeaker = constants.null_spk
+        self.nullStyle = constants.null_style
+
+        // Precompute null text context for CFG: ids = [bos, eos] = [1, 2], mask = [true, true]
+        if config.cfgScale > 0 {
+            if let (ctx, mask) = try? await engine.runTextEncoder(tokenIDs: [1, 2], style: constants.null_style) {
+                self.nullCtx = ctx
+                self.nullMask = mask
+            } else {
+                self.nullCtx = Array(repeating: Array(repeating: Float(0.0), count: 256), count: 2)
+                self.nullMask = [true, true]
+            }
+        } else {
+            self.nullCtx = []
+            self.nullMask = []
         }
 
         self.voiceCloner = VoiceCloner(onnxEngine: self.engine)
@@ -72,7 +101,7 @@ public actor VieNeuTTS {
             return loaded
         }
 
-        // Fallback for standard or mock presets
+        // Fallback for mock test environments
         if name == "Minh Quân" || name == "MockVoice" || name.contains("Mock") {
             let mock = VoiceProfile.mock(name: name)
             presetVoiceStore.set(name: name, profile: mock)
@@ -227,11 +256,7 @@ public actor VieNeuTTS {
             steps: config.eulerSteps,
             cfgScale: config.cfgScale,
             sway: config.sway,
-            uncondEstimator: config.cfgScale > 0 ? { [engine = self.engine] x, t in
-                let nullCtx = Array(repeating: Array(repeating: Float(0.0), count: 256), count: 2)
-                let nullMask = Array(repeating: false, count: 2)
-                let nullSpeaker = Array(repeating: Float(0.0), count: 192)
-                let nullStyle = Array(repeating: Array(repeating: Float(0.0), count: 256), count: 50)
+            uncondEstimator: (config.cfgScale > 0 && !self.nullCtx.isEmpty) ? { [engine = self.engine, nullCtx = self.nullCtx, nullMask = self.nullMask, nullSpeaker = self.nullSpeaker, nullStyle = self.nullStyle] x, t in
                 return try await engine.runVectorEstimator(
                     x: x, t: t, ctx: nullCtx, mask: nullMask,
                     speakerEmbedding: nullSpeaker, style: nullStyle
@@ -288,9 +313,19 @@ private final class PresetVoiceStore: @unchecked Sendable {
 
         let candidates = ["voices_v3_nano.json", "voices.json"]
         for filename in candidates {
-            guard let url = try? modelProvider.modelURL(for: filename),
-                  let data = try? Data(contentsOf: url),
-                  let decoded = try? JSONDecoder().decode(PresetVoiceFile.self, from: data),
+            let data: Data?
+            if let url = try? modelProvider.modelURL(for: filename),
+               let d = try? Data(contentsOf: url) {
+                data = d
+            } else if let resURL = VieNeuResources.url(for: filename),
+                      let d = try? Data(contentsOf: resURL) {
+                data = d
+            } else {
+                data = nil
+            }
+
+            guard let rawData = data,
+                  let decoded = try? JSONDecoder().decode(PresetVoiceFile.self, from: rawData),
                   let presets = decoded.presets else {
                 continue
             }

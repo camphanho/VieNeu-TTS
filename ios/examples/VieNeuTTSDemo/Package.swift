@@ -23,7 +23,10 @@ let package = Package(
                 .product(name: "VieNeuTTS", package: "VieNeuTTS")
             ],
             path: "VieNeuTTSDemo",
-            exclude: ["Info.plist"]
+            exclude: ["Info.plist"],
+            resources: [
+                .copy("Resources")
+            ]
         )
     ]
 )

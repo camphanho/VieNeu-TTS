@@ -164,13 +164,14 @@ public final class TTSViewModel: ObservableObject {
 
             // Load preset voices
             var voices: [VoiceProfile] = []
-            let minhQuan = (try? ttsInstance.loadPresetVoice(name: "Minh Quân")) ?? VoiceProfile.mock(name: "Minh Quân")
-            voices.append(minhQuan)
-
-            if let maiAnh = try? ttsInstance.loadPresetVoice(name: "Mai Anh") {
-                voices.append(maiAnh)
-            } else {
-                voices.append(VoiceProfile.mock(name: "Mai Anh"))
+            let presetNames = ["Minh Quân", "Mai Anh", "Tuấn Dũng", "Thảo Trang", "Quỳnh Như", "Hồng Đăng", "Bảo Long", "Văn Dũng", "Adam"]
+            for name in presetNames {
+                if let v = try? ttsInstance.loadPresetVoice(name: name) {
+                    voices.append(v)
+                }
+            }
+            if voices.isEmpty {
+                voices.append(VoiceProfile.mock(name: "Minh Quân"))
             }
 
             // Load enrolled custom voices from disk
@@ -178,7 +179,7 @@ public final class TTSViewModel: ObservableObject {
             voices.append(contentsOf: customVoices)
 
             self.availableVoices = voices
-            self.selectedVoice = minhQuan
+            self.selectedVoice = voices.first!
             self.isReady = true
             self.isDownloading = false
             self.statusMessage = "Mô hình v3 Nano đã sẵn sàng!"

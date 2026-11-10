@@ -51,6 +51,8 @@ fn find_dict_path() -> Option<PathBuf> {
         "sea_g2p.bin",
         "Resources/sea_g2p.bin",
         "Frameworks/sea_g2p.bin",
+        "VieNeuTTSDemo_VieNeuTTSDemo.bundle/Resources/sea_g2p.bin",
+        "VieNeuTTSDemo_VieNeuTTSDemo.bundle/sea_g2p.bin",
         ".venv/lib/python3.12/site-packages/sea_g2p/sea_g2p.bin",
         ".venv/lib/python3.11/site-packages/sea_g2p/sea_g2p.bin",
         ".venv/lib/python3.10/site-packages/sea_g2p/sea_g2p.bin",

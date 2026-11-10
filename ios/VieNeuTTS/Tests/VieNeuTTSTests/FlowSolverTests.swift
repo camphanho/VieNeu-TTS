@@ -189,7 +189,7 @@ final class FlowSolverTests: XCTestCase {
         _ = try await tts.synthesize(text: "xin chào", voice: voice)
 
         let recording = await engine.recording
-        XCTAssertEqual(recording.textStyles.first, voice.styleTokens)
+        XCTAssertEqual(recording.textStyles.last, voice.styleTokens)
         XCTAssertEqual(recording.durationSpeakerEmbeddings.first, voice.speakerEmbedding)
         XCTAssertEqual(recording.vectorSpeakerEmbeddings.first, voice.speakerEmbedding)
         XCTAssertEqual(recording.vectorStyles.first, voice.styleTokens)
@@ -218,7 +218,7 @@ final class FlowSolverTests: XCTestCase {
         }
 
         func runVectorEstimator(x: [[Float]], t: Float, ctx: [[Float]], mask: [Bool], speakerEmbedding: [Float], style: [[Float]]) async throws -> [[Float]] {
-            if ctx.allSatisfy({ $0.allSatisfy { $0 == 0 } }) {
+            if ctx.count == 2 && mask.count == 2 {
                 recording.unconditionalCalls += 1
             } else {
                 recording.vectorSpeakerEmbeddings.append(speakerEmbedding)

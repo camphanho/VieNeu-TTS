@@ -367,7 +367,7 @@ public final class TTSViewModel: ObservableObject {
 
         let audioSession = AVAudioSession.sharedInstance()
         do {
-            try audioSession.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetooth])
+            try audioSession.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetoothHFP])
             try audioSession.setActive(true)
         } catch {
             errorMessage = "Không thể khởi động bộ ghi âm: \(error.localizedDescription)"
@@ -482,7 +482,7 @@ public final class TTSViewModel: ObservableObject {
 
         do {
             let audioSession = AVAudioSession.sharedInstance()
-            try audioSession.setCategory(.playback, mode: .default, options: [.defaultToSpeaker])
+            try audioSession.setCategory(.playback, mode: .default)
             try audioSession.setActive(true)
 
             let player = try AVAudioPlayer(contentsOf: url)

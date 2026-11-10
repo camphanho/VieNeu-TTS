@@ -236,7 +236,7 @@ public actor ONNXEngine: ONNXInferenceEngine {
         }
         let frames = x.count
         let dim = x.first?.count ?? 144
-        let xTensor = try ORTTensorHelper.createTensor(from: x, shape: [1, NSNumber(value: dim), NSNumber(value: frames)])
+        let xTensor = try ORTTensorHelper.createTransposedTensor(from: x, shape: [1, NSNumber(value: dim), NSNumber(value: frames)])
         let tTensor = try ORTTensorHelper.createTensor(from: [t], shape: [1])
         let ctxTensor = try ORTTensorHelper.createTensor(from: cond, shape: [1, NSNumber(value: cond.count), NSNumber(value: cond.first?.count ?? 256)])
         let maskTensor = try ORTTensorHelper.createTensor(from: Array(repeating: true, count: cond.count), shape: [1, NSNumber(value: cond.count)])
@@ -258,17 +258,7 @@ public actor ONNXEngine: ONNXInferenceEngine {
         guard let firstOutput = outputs.values.first else {
             throw VieNeuError.synthesisFailed("Vector estimator produced no outputs.")
         }
-        let flat = try ORTTensorHelper.extractFloatArray(from: firstOutput)
-        var result = [[Float]](repeating: [Float](repeating: 0.0, count: dim), count: frames)
-        for r in 0..<frames {
-            for c in 0..<dim {
-                let idx = r * dim + c
-                if idx < flat.count {
-                    result[r][c] = flat[idx]
-                }
-            }
-        }
-        return result
+        return try ORTTensorHelper.extractTransposed2D(from: firstOutput, frames: frames, dim: dim)
         #else
         throw VieNeuError.synthesisFailed("ONNX Runtime is not available on this platform.")
         #endif
@@ -281,7 +271,7 @@ public actor ONNXEngine: ONNXInferenceEngine {
         }
         let frames = latents.count
         let dim = latents.first?.count ?? 144
-        let xTensor = try ORTTensorHelper.createTensor(from: latents, shape: [1, NSNumber(value: dim), NSNumber(value: frames)])
+        let xTensor = try ORTTensorHelper.createTransposedTensor(from: latents, shape: [1, NSNumber(value: dim), NSNumber(value: frames)])
         let outputs = try session.run(
             withInputs: ["x": xTensor],
             outputNames: nil,
@@ -351,7 +341,7 @@ public actor ONNXEngine: ONNXInferenceEngine {
         }
         let frames = refCodes.count
         let dim = refCodes.first?.count ?? 256
-        let refTensor = try ORTTensorHelper.createTensor(from: refCodes, shape: [1, NSNumber(value: dim), NSNumber(value: frames)])
+        let refTensor = try ORTTensorHelper.createTransposedTensor(from: refCodes, shape: [1, NSNumber(value: dim), NSNumber(value: frames)])
         let maskTensor = try ORTTensorHelper.createTensor(from: Array(repeating: true, count: frames), shape: [1, NSNumber(value: frames)])
         let outputs = try refSession!.run(withInputs: ["ref": refTensor, "ref_mask": maskTensor], outputNames: nil, runOptions: nil)
         guard let first = outputs.values.first else {
@@ -376,6 +366,42 @@ public actor ONNXEngine: ONNXInferenceEngine {
     }
 }
 
+// MARK: - Tensor Layout Helpers
+
+/// Helper for tensor transposition between row-major `[frames, dim]` and channel-first `[dim, frames]`.
+public enum TensorLayoutHelper {
+    /// Transposes row-major 2D array `[frames, dim]` into channel-first flat layout `[dim, frames]`
+    /// such that `transposed[c * frames + r] = array2D[r][c]`.
+    public static func transposeToChannelFirst(array2D: [[Float]]) -> [Float] {
+        guard !array2D.isEmpty else { return [] }
+        let frames = array2D.count
+        let dim = array2D[0].count
+        var transposed = [Float](repeating: 0.0, count: frames * dim)
+        for r in 0..<frames {
+            let row = array2D[r]
+            for c in 0..<dim {
+                transposed[c * frames + r] = row[c]
+            }
+        }
+        return transposed
+    }
+
+    /// Unpacks flat channel-first tensor `[dim, frames]` into row-major 2D array `[frames, dim]`
+    /// such that `result[r][c] = flat[c * frames + r]`.
+    public static func transposeFromChannelFirst(flat: [Float], frames: Int, dim: Int) -> [[Float]] {
+        var result = [[Float]](repeating: [Float](repeating: 0.0, count: dim), count: frames)
+        for r in 0..<frames {
+            for c in 0..<dim {
+                let idx = c * frames + r
+                if idx < flat.count {
+                    result[r][c] = flat[idx]
+                }
+            }
+        }
+        return result
+    }
+}
+
 // MARK: - ONNX Tensor Helpers
 
 #if canImport(onnxruntime)
@@ -389,6 +415,16 @@ enum ORTTensorHelper {
     static func createTensor(from array: [[Float]], shape: [NSNumber]) throws -> ORTValue {
         let flattened = array.flatMap { $0 }
         return try createTensor(from: flattened, shape: shape)
+    }
+
+    static func createTransposedTensor(from array2D: [[Float]], shape: [NSNumber]) throws -> ORTValue {
+        let transposed = TensorLayoutHelper.transposeToChannelFirst(array2D: array2D)
+        return try createTensor(from: transposed, shape: shape)
+    }
+
+    static func extractTransposed2D(from value: ORTValue, frames: Int, dim: Int) throws -> [[Float]] {
+        let flat = try extractFloatArray(from: value)
+        return TensorLayoutHelper.transposeFromChannelFirst(flat: flat, frames: frames, dim: dim)
     }
 
     static func createTensor(from array: [Int64], shape: [NSNumber]) throws -> ORTValue {

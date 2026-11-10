@@ -188,13 +188,10 @@ public struct FlowSolver: Sendable {
             vCond[r].withUnsafeBufferPointer { condPtr in
                 vUncond[r].withUnsafeBufferPointer { uncondPtr in
                     result[r].withUnsafeMutableBufferPointer { resPtr in
-                        var diff = [Float](repeating: 0.0, count: cols)
-                        diff.withUnsafeMutableBufferPointer { diffPtr in
-                            // diff = vCond - vUncond
-                            vDSP_vsub(uncondPtr.baseAddress!, 1, condPtr.baseAddress!, 1, diffPtr.baseAddress!, 1, vDSP_Length(cols))
-                            // res = diff * scale + vUncond
-                            vDSP_vsma(diffPtr.baseAddress!, 1, &scale, uncondPtr.baseAddress!, 1, resPtr.baseAddress!, 1, vDSP_Length(cols))
-                        }
+                        // res = vCond - vUncond (written directly into destination buffer)
+                        vDSP_vsub(uncondPtr.baseAddress!, 1, condPtr.baseAddress!, 1, resPtr.baseAddress!, 1, vDSP_Length(cols))
+                        // res = res * scale + vUncond = (vCond - vUncond) * scale + vUncond
+                        vDSP_vsma(resPtr.baseAddress!, 1, &scale, uncondPtr.baseAddress!, 1, resPtr.baseAddress!, 1, vDSP_Length(cols))
                     }
                 }
             }
@@ -203,8 +200,10 @@ public struct FlowSolver: Sendable {
         #else
         var result = [[Float]](repeating: [Float](repeating: 0.0, count: cols), count: rows)
         for r in 0..<rows {
+            let condRow = vCond[r]
+            let uncondRow = vUncond[r]
             for c in 0..<cols {
-                result[r][c] = vUncond[r][c] + cfgScale * (vCond[r][c] - vUncond[r][c])
+                result[r][c] = uncondRow[c] + cfgScale * (condRow[c] - uncondRow[c])
             }
         }
         return result

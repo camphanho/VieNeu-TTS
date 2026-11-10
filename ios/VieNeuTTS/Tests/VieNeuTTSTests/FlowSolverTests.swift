@@ -160,4 +160,40 @@ final class FlowSolverTests: XCTestCase {
         XCTAssertEqual(style.count, 50)
         XCTAssertEqual(style[0].count, 256)
     }
+
+    func testTensorLayoutHelperTranspositionRoundTrip() {
+        let frames = 4
+        let dim = 3
+        var matrix = [[Float]]()
+        var val: Float = 1.0
+        for _ in 0..<frames {
+            var row = [Float]()
+            for _ in 0..<dim {
+                row.append(val)
+                val += 1.0
+            }
+            matrix.append(row)
+        }
+
+        // matrix:
+        // [1, 2, 3]
+        // [4, 5, 6]
+        // [7, 8, 9]
+        // [10, 11, 12]
+        let channelFirst = TensorLayoutHelper.transposeToChannelFirst(array2D: matrix)
+        XCTAssertEqual(channelFirst.count, frames * dim)
+        // Channel 0: [1, 4, 7, 10]
+        XCTAssertEqual(Array(channelFirst[0..<4]), [1, 4, 7, 10])
+        // Channel 1: [2, 5, 8, 11]
+        XCTAssertEqual(Array(channelFirst[4..<8]), [2, 5, 8, 11])
+        // Channel 2: [3, 6, 9, 12]
+        XCTAssertEqual(Array(channelFirst[8..<12]), [3, 6, 9, 12])
+
+        // Roundtrip unpacking
+        let unpacked = TensorLayoutHelper.transposeFromChannelFirst(flat: channelFirst, frames: frames, dim: dim)
+        XCTAssertEqual(unpacked.count, frames)
+        for r in 0..<frames {
+            XCTAssertEqual(unpacked[r], matrix[r])
+        }
+    }
 }

@@ -9,7 +9,8 @@ let xcframeworkPath = "\(packageDirectory)/Frameworks/SeaG2P.xcframework"
 #if os(macOS) || os(iOS) || os(tvOS) || os(watchOS) || os(visionOS)
 let hasXCFramework = FileManager.default.fileExists(atPath: xcframeworkPath)
 #else
-let hasXCFramework = false
+let hasXCFramework = ProcessInfo.processInfo.environment["USE_XCFRAMEWORK"] == "1"
+    || ProcessInfo.processInfo.environment["XTOOL_BUILD"] == "1"
 #endif
 
 var packageDependencies: [Package.Dependency] = []

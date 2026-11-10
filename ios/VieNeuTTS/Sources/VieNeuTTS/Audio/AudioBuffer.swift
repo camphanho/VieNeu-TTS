@@ -61,3 +61,18 @@ public extension AudioBuffer {
     }
 }
 #endif
+
+/// Represents an audio chunk emitted during streaming speech synthesis.
+public struct AudioChunk: Sendable, Equatable {
+    public let index: Int
+    public let text: String
+    public let audio: AudioBuffer
+    public let pauseAfter: Float
+
+    public init(index: Int, text: String, audio: AudioBuffer, pauseAfter: Float = 0.2) {
+        self.index = index
+        self.text = text
+        self.audio = audio
+        self.pauseAfter = pauseAfter
+    }
+}

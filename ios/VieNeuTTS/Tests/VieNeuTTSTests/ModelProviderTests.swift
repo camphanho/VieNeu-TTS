@@ -263,4 +263,11 @@ final class ModelProviderTests: XCTestCase {
         let synthFailed = VieNeuError.synthesisFailed("engine error")
         XCTAssertNotNil(synthFailed.errorDescription)
     }
+
+    func testTurboRequiredFilesConfiguration() {
+        XCTAssertTrue(ModelDownloader.turboRequiredFiles.contains("vieneu_prefill.onnx"))
+        XCTAssertTrue(ModelDownloader.turboRequiredFiles.contains("vieneu_decode_step.onnx"))
+        XCTAssertTrue(ModelDownloader.turboRequiredFiles.contains("moss_audio_tokenizer_decode_full.onnx"))
+        XCTAssertEqual(VieNeuConfig.mock(mode: .v3turbo).mode, .v3turbo)
+    }
 }

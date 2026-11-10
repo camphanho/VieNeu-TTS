@@ -22,6 +22,26 @@ public actor ModelDownloader {
         "reference_encoder.onnx"
     ]
 
+    /// Hugging Face repository containing v3 Turbo ONNX models.
+    public static let turboRepo = "pnnbao-ump/VieNeu-TTS-v3-Turbo"
+
+    /// Hugging Face repository containing MOSS Audio Tokenizer models.
+    public static let codecRepo = "OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano-ONNX"
+
+    /// List of model filenames required for the v3 Turbo INT8 neural pipeline.
+    public static let turboRequiredFiles: [String] = [
+        "vieneu_prefill.onnx",
+        "vieneu_decode_step.onnx",
+        "vieneu_backbone_shared.data",
+        "vieneu_acoustic_cached.onnx",
+        "vieneu_v3_heads.npz",
+        "config.json",
+        "tokenizer.json",
+        "moss_audio_tokenizer_decode_full.onnx",
+        "moss_audio_tokenizer_decode_shared.data",
+        "moss_audio_tokenizer_decode_step.onnx"
+    ]
+
     /// Repository identifier (e.g. `pnnbao-ump/VieNeu-TTS-v3-Nano`).
     public let repo: String
 

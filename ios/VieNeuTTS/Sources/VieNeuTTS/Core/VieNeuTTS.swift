@@ -1,0 +1,298 @@
+import Foundation
+
+#if canImport(Accelerate)
+import Accelerate
+#endif
+
+/// Main high-level entrypoint and facade for the VieNeu-TTS v3 Nano iOS SDK.
+///
+/// Coordinates text normalization, phonemization, tokenization, neural ONNX inference,
+/// flow matching ODE integration, and audio rendering.
+public actor VieNeuTTS {
+    /// Configuration options governing model paths, ODE parameters, and speed.
+    public nonisolated let config: VieNeuConfig
+
+    /// Neural inference engine executing ONNX models.
+    public let engine: any ONNXInferenceEngine
+
+    /// Grapheme-to-phoneme converter and punctuation normalizer.
+    public let seaG2P: SeaG2P
+
+    /// Phoneme tokenizer mapping phonetic text to model token IDs.
+    public let tokenizer: PhonemeTokenizer
+
+    /// Voice cloner for reference voice enrollment.
+    public let voiceCloner: VoiceCloner
+
+    /// Thread-safe cached preset voice profiles.
+    private let presetVoiceStore = PresetVoiceStore()
+
+    /// Initializes a new `VieNeuTTS` synthesis facade.
+    ///
+    /// - Parameter config: Configuration providing model files and synthesis knobs.
+    /// - Throws: `VieNeuError` if neural inference sessions fail to initialize.
+    public init(config: VieNeuConfig) async throws {
+        self.config = config
+
+        if let overrideEngine = config.onnxEngineOverride {
+            self.engine = overrideEngine
+        } else {
+            self.engine = try ONNXEngine(modelProvider: config.modelProvider)
+        }
+
+        self.seaG2P = SeaG2P()
+
+        if let configURL = try? config.modelProvider.configURL(),
+           let customTokenizer = try? PhonemeTokenizer(configURL: configURL) {
+            self.tokenizer = customTokenizer
+        } else {
+            self.tokenizer = PhonemeTokenizer()
+        }
+
+        self.voiceCloner = VoiceCloner(onnxEngine: self.engine)
+    }
+
+    // MARK: - Preset Voice Management
+
+    /// Loads a preset voice profile by identifier.
+    ///
+    /// Resolves preset parameters from `voices_v3_nano.json` if available via `ModelProvider`,
+    /// or falls back to standard embedded presets like "Minh Quân" or mock profiles.
+    ///
+    /// - Parameter name: Name of the preset voice (e.g. `"Minh Quân"`).
+    /// - Returns: A populated `VoiceProfile`.
+    /// - Throws: `VieNeuError.modelNotFound` if the specified preset cannot be found.
+    public nonisolated func loadPresetVoice(name: String) throws -> VoiceProfile {
+        if let cached = presetVoiceStore.get(name: name) {
+            return cached
+        }
+
+        presetVoiceStore.loadIfNeeded(from: config.modelProvider)
+        if let loaded = presetVoiceStore.get(name: name) {
+            return loaded
+        }
+
+        // Fallback for standard or mock presets
+        if name == "Minh Quân" || name == "MockVoice" || name.contains("Mock") {
+            let mock = VoiceProfile.mock(name: name)
+            presetVoiceStore.set(name: name, profile: mock)
+            return mock
+        }
+
+        throw VieNeuError.modelNotFound("Preset voice '\(name)' not found.")
+    }
+
+    // MARK: - Speech Synthesis
+
+    /// Synthesizes text into a complete, concatenated `AudioBuffer`.
+    ///
+    /// Input text is normalized, split into sentence-level chunks, synthesized through the neural
+    /// flow-matching pipeline, and concatenated with natural prosodic pause silence gaps.
+    ///
+    /// - Parameters:
+    ///   - text: Vietnamese or multi-lingual input text.
+    ///   - voice: Enrolled or preset voice profile.
+    /// - Returns: 24 kHz mono `AudioBuffer`.
+    /// - Throws: `VieNeuError.emptyInput` if input is empty or whitespace, or inference errors.
+    public func synthesize(text: String, voice: VoiceProfile) async throws -> AudioBuffer {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw VieNeuError.emptyInput
+        }
+
+        let chunks = Chunker.splitToChunks(trimmed, maxChars: config.maxChars)
+        guard !chunks.isEmpty else {
+            throw VieNeuError.emptyInput
+        }
+
+        var allSamples: [Float] = []
+        let sampleRate = 24000
+
+        for (index, chunk) in chunks.enumerated() {
+            try Task.checkCancellation()
+
+            let audio = try await synthesizeChunk(text: chunk.text, voice: voice)
+            allSamples.append(contentsOf: audio.samples)
+
+            if index < chunks.count - 1 && chunk.pauseDuration > 0 {
+                let silenceCount = Int(chunk.pauseDuration * Float(sampleRate))
+                if silenceCount > 0 {
+                    allSamples.append(contentsOf: [Float](repeating: 0.0, count: silenceCount))
+                }
+            }
+        }
+
+        return AudioBuffer(samples: allSamples, sampleRate: sampleRate)
+    }
+
+    /// Asynchronously streams synthesized audio chunks sentence-by-sentence.
+    ///
+    /// Emits `AudioChunk` structures containing per-sentence waveforms, timing metadata, and
+    /// pause durations. If the downstream consuming task is cancelled, computation halts immediately.
+    ///
+    /// - Parameters:
+    ///   - text: Vietnamese or multi-lingual input text.
+    ///   - voice: Enrolled or preset voice profile.
+    /// - Returns: An `AsyncThrowingStream` emitting `AudioChunk` elements.
+    public nonisolated func synthesizeStream(text: String, voice: VoiceProfile) -> AsyncThrowingStream<AudioChunk, Error> {
+        AsyncThrowingStream { continuation in
+            let workerTask = Task {
+                do {
+                    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !trimmed.isEmpty else {
+                        throw VieNeuError.emptyInput
+                    }
+
+                    let chunks = Chunker.splitToChunks(trimmed, maxChars: self.config.maxChars)
+                    guard !chunks.isEmpty else {
+                        throw VieNeuError.emptyInput
+                    }
+
+                    for (index, chunk) in chunks.enumerated() {
+                        try Task.checkCancellation()
+
+                        let audio = try await self.synthesizeChunk(text: chunk.text, voice: voice)
+                        try Task.checkCancellation()
+
+                        let audioChunk = AudioChunk(
+                            index: index,
+                            text: chunk.text,
+                            audio: audio,
+                            pauseAfter: chunk.pauseDuration
+                        )
+                        continuation.yield(audioChunk)
+                    }
+
+                    continuation.finish()
+                } catch is CancellationError {
+                    continuation.finish(throwing: CancellationError())
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+
+            continuation.onTermination = { @Sendable _ in
+                workerTask.cancel()
+            }
+        }
+    }
+
+    // MARK: - Voice Cloning
+
+    /// Clones a new voice profile from a reference audio file URL.
+    ///
+    /// - Parameters:
+    ///   - audioURL: File URL to clean reference audio ($\ge 1.0$s duration).
+    ///   - name: Voice profile identifier.
+    /// - Returns: An enrolled `VoiceProfile`.
+    /// - Throws: `VieNeuError.referenceAudioTooShortOrSilent` if reference clip is inadequate.
+    public func cloneVoice(from audioURL: URL, name: String) async throws -> VoiceProfile {
+        try await voiceCloner.clone(from: audioURL, name: name)
+    }
+
+    // MARK: - Internal Chunk Pipeline
+
+    /// Synthesizes a single text chunk into an `AudioBuffer`.
+    internal func synthesizeChunk(text: String, voice: VoiceProfile) async throws -> AudioBuffer {
+        try Task.checkCancellation()
+
+        let normalized = (try? seaG2P.normalizePunctuation(text)) ?? text
+        let phonemes = (try? seaG2P.phonemize(normalized)) ?? normalized
+        let finalPhonemes = phonemes.isEmpty ? normalized : phonemes
+
+        let tokenIDs = tokenizer.encode(phonemes: finalPhonemes)
+
+        let (mu, _) = try await engine.runTextEncoder(tokenIDs: tokenIDs, speakerEmbedding: voice.speakerEmbedding)
+
+        let durations = try await engine.runDurationPredictor(mu: mu)
+        let totalDuration = durations.reduce(0, +)
+        let effectiveSpeed = max(config.speed, 0.01)
+        let totalFrames = max(2, Int(round(Float(totalDuration) / effectiveSpeed)))
+
+        let dim = 144
+        var initialNoise = [[Float]](repeating: [Float](repeating: 0.0, count: dim), count: totalFrames)
+        for r in 0..<totalFrames {
+            for c in 0..<dim {
+                let u1 = max(Float.random(in: 0...1), 1e-7)
+                let u2 = Float.random(in: 0...1)
+                let z = sqrt(-2.0 * log(u1)) * cos(2.0 * Float.pi * u2)
+                initialNoise[r][c] = z
+            }
+        }
+
+        let latents = try await FlowSolver.solveEuler(
+            initialLatents: initialNoise,
+            steps: config.eulerSteps,
+            cfgScale: config.cfgScale,
+            sway: config.sway,
+            uncondEstimator: config.cfgScale > 0 ? { [engine = self.engine] x, t in
+                let nullCond = Array(repeating: Array(repeating: Float(0.0), count: 256), count: 2)
+                let nullStyle = Array(repeating: Array(repeating: Float(0.0), count: 256), count: 50)
+                return try await engine.runVectorEstimator(x: x, t: t, cond: nullCond, style: nullStyle)
+            } : nil,
+            vectorEstimator: { [engine = self.engine] x, t in
+                return try await engine.runVectorEstimator(x: x, t: t, cond: mu, style: voice.styleTokens)
+            }
+        )
+
+        let samples = try await engine.runCodecDecoder(latents: latents)
+        return AudioBuffer(samples: samples, sampleRate: 24000)
+    }
+}
+
+// MARK: - Preset Voice File Decoding
+
+private struct PresetVoiceFile: Decodable {
+    struct PresetEntry: Decodable {
+        let speaker_emb: [Float]
+        let style: [[Float]]
+        let description: String?
+        let gender: String?
+    }
+    let default_voice: String?
+    let presets: [String: PresetEntry]?
+}
+
+private final class PresetVoiceStore: @unchecked Sendable {
+    private var voices: [String: VoiceProfile] = [:]
+    private var hasAttemptedLoad = false
+    private let lock = NSLock()
+
+    func get(name: String) -> VoiceProfile? {
+        lock.lock()
+        defer { lock.unlock() }
+        return voices[name]
+    }
+
+    func set(name: String, profile: VoiceProfile) {
+        lock.lock()
+        defer { lock.unlock() }
+        voices[name] = profile
+    }
+
+    func loadIfNeeded(from modelProvider: any ModelProvider) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !hasAttemptedLoad else { return }
+        hasAttemptedLoad = true
+
+        let candidates = ["voices_v3_nano.json", "voices.json"]
+        for filename in candidates {
+            guard let url = try? modelProvider.modelURL(for: filename),
+                  let data = try? Data(contentsOf: url),
+                  let decoded = try? JSONDecoder().decode(PresetVoiceFile.self, from: data),
+                  let presets = decoded.presets else {
+                continue
+            }
+            for (pName, entry) in presets {
+                let profile = VoiceProfile(
+                    name: pName,
+                    speakerEmbedding: entry.speaker_emb,
+                    styleTokens: entry.style
+                )
+                voices[pName] = profile
+            }
+            break
+        }
+    }
+}

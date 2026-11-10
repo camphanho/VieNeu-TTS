@@ -10,25 +10,27 @@ public protocol ONNXInferenceEngine: Sendable {
     ///
     /// - Parameters:
     ///   - tokenIDs: Array of tokenized phoneme IDs.
-    ///   - speakerEmbedding: 192-dimensional speaker embedding vector.
-    /// - Returns: A tuple containing the text hidden representations (`mu`) and validity `mask`.
-    func runTextEncoder(tokenIDs: [Int64], speakerEmbedding: [Float]) async throws -> (mu: [[Float]], mask: [Bool])
+    ///   - style: Reference style tokens with shape `[50, 256]`.
+    /// - Returns: Text context and its validity mask.
+    func runTextEncoder(tokenIDs: [Int64], style: [[Float]]) async throws -> (ctx: [[Float]], mask: [Bool])
 
-    /// Runs the duration predictor model to determine acoustic frame counts per phoneme.
-    ///
-    /// - Parameter mu: Text encoder hidden representations.
-    /// - Returns: Array of integer duration frame counts.
-    func runDurationPredictor(mu: [[Float]]) async throws -> [Int]
+    /// Converts the duration predictor's scalar log-duration output to acoustic frames.
+    func runDurationPredictor(
+        ctx: [[Float]],
+        mask: [Bool],
+        speakerEmbedding: [Float],
+        speed: Float
+    ) async throws -> Int
 
-    /// Evaluates the vector field at state `x` and time `t` for flow matching ODE integration.
-    ///
-    /// - Parameters:
-    ///   - x: Current latent state tensor of shape `[frames, dim]`.
-    ///   - t: Integration time step $t \in [0, 1]$.
-    ///   - cond: Conditioning text context representations.
-    ///   - style: Style tokens tensor of shape `[50, 256]`.
-    /// - Returns: Predicted velocity field tensor of same shape as `x`.
-    func runVectorEstimator(x: [[Float]], t: Float, cond: [[Float]], style: [[Float]]) async throws -> [[Float]]
+    /// Evaluates the conditional vector field at state `x` and time `t` for flow matching ODE integration.
+    func runVectorEstimator(
+        x: [[Float]],
+        t: Float,
+        ctx: [[Float]],
+        mask: [Bool],
+        speakerEmbedding: [Float],
+        style: [[Float]]
+    ) async throws -> [[Float]]
 
     /// Decodes acoustic latent representations into raw 24 kHz audio samples.
     ///
@@ -87,18 +89,18 @@ public extension ONNXInferenceEngine {
 public actor MockONNXEngine: ONNXInferenceEngine {
     public init() {}
 
-    public func runTextEncoder(tokenIDs: [Int64], speakerEmbedding: [Float]) async throws -> (mu: [[Float]], mask: [Bool]) {
+    public func runTextEncoder(tokenIDs: [Int64], style: [[Float]]) async throws -> (ctx: [[Float]], mask: [Bool]) {
         let count = max(1, tokenIDs.count)
-        let mu = (0..<count).map { _ in (0..<256).map { _ in Float(0.1) } }
+        let ctx = (0..<count).map { _ in (0..<256).map { _ in Float(0.1) } }
         let mask = Array(repeating: true, count: count)
-        return (mu, mask)
+        return (ctx, mask)
     }
 
-    public func runDurationPredictor(mu: [[Float]]) async throws -> [Int] {
-        Array(repeating: 2, count: max(1, mu.count))
+    public func runDurationPredictor(ctx: [[Float]], mask: [Bool], speakerEmbedding: [Float], speed: Float) async throws -> Int {
+        ONNXEngine.durationFrames(logSeconds: 0.0, speed: speed)
     }
 
-    public func runVectorEstimator(x: [[Float]], t: Float, cond: [[Float]], style: [[Float]]) async throws -> [[Float]] {
+    public func runVectorEstimator(x: [[Float]], t: Float, ctx: [[Float]], mask: [Bool], speakerEmbedding: [Float], style: [[Float]]) async throws -> [[Float]] {
         x.map { row in row.map { $0 * 0.5 } }
     }
 
@@ -112,7 +114,7 @@ public actor MockONNXEngine: ONNXInferenceEngine {
     }
 
     public func runCodecEncoder(audio: [Float]) async throws -> [[Float]] {
-        Array(repeating: Array(repeating: Float(0.1), count: 256), count: 50)
+        Array(repeating: Array(repeating: Float(0.1), count: 24), count: 6)
     }
 
     public func runReferenceEncoder(refCodes: [[Float]]) async throws -> [[Float]] {
@@ -177,7 +179,14 @@ public actor ONNXEngine: ONNXInferenceEngine {
         #endif
     }
 
-    public func runTextEncoder(tokenIDs: [Int64], speakerEmbedding: [Float]) async throws -> (mu: [[Float]], mask: [Bool]) {
+    /// Converts the v3 Nano scalar duration prediction to codec frames.
+    public nonisolated static func durationFrames(logSeconds: Float, speed: Float) -> Int {
+        let framesPerSecond: Float = 24000.0 / 256.0 / 6.0
+        let seconds = min(exp(logSeconds) / max(speed, 1e-3), 15.0)
+        return max(2, Int((seconds * framesPerSecond).rounded()))
+    }
+
+    public func runTextEncoder(tokenIDs: [Int64], style: [[Float]]) async throws -> (ctx: [[Float]], mask: [Bool]) {
         #if canImport(onnxruntime)
         guard let session = textSession else {
             throw VieNeuError.synthesisFailed("Text encoder session not loaded.")
@@ -185,7 +194,7 @@ public actor ONNXEngine: ONNXInferenceEngine {
         let length = tokenIDs.count
         let idsTensor = try ORTTensorHelper.createTensor(from: tokenIDs, shape: [1, NSNumber(value: length)])
         let styleTensor = try ORTTensorHelper.createTensor(
-            from: Array(repeating: Array(repeating: Float(0.0), count: 256), count: 50),
+            from: style,
             shape: [1, 50, 256]
         )
         let outputs = try session.run(
@@ -215,33 +224,33 @@ public actor ONNXEngine: ONNXInferenceEngine {
         #endif
     }
 
-    public func runDurationPredictor(mu: [[Float]]) async throws -> [Int] {
+    public func runDurationPredictor(ctx: [[Float]], mask: [Bool], speakerEmbedding: [Float], speed: Float) async throws -> Int {
         #if canImport(onnxruntime)
         guard let session = durationSession else {
             throw VieNeuError.synthesisFailed("Duration predictor session not loaded.")
         }
-        let rows = mu.count
-        let cols = mu.first?.count ?? 256
-        let ctxTensor = try ORTTensorHelper.createTensor(from: mu, shape: [1, NSNumber(value: rows), NSNumber(value: cols)])
-        let maskTensor = try ORTTensorHelper.createTensor(from: Array(repeating: true, count: rows), shape: [1, NSNumber(value: rows)])
-        let spkTensor = try ORTTensorHelper.createTensor(from: Array(repeating: Float(0.0), count: 192), shape: [1, 192])
+        let rows = ctx.count
+        let cols = ctx.first?.count ?? 256
+        let ctxTensor = try ORTTensorHelper.createTensor(from: ctx, shape: [1, NSNumber(value: rows), NSNumber(value: cols)])
+        let maskTensor = try ORTTensorHelper.createTensor(from: mask, shape: [1, NSNumber(value: rows)])
+        let spkTensor = try ORTTensorHelper.createTensor(from: speakerEmbedding, shape: [1, 192])
 
         let outputs = try session.run(
             withInputs: ["ctx": ctxTensor, "ctx_mask": maskTensor, "spk": spkTensor],
             outputNames: nil,
             runOptions: nil
         )
-        guard let firstOutput = outputs.values.first else {
-            throw VieNeuError.synthesisFailed("Duration predictor produced no outputs.")
+        guard let firstOutput = outputs.values.first,
+              let logSeconds = try ORTTensorHelper.extractFloatArray(from: firstOutput).first else {
+            throw VieNeuError.synthesisFailed("Duration predictor produced no scalar output.")
         }
-        let flat = try ORTTensorHelper.extractFloatArray(from: firstOutput)
-        return flat.map { max(1, Int(round($0))) }
+        return Self.durationFrames(logSeconds: logSeconds, speed: speed)
         #else
         throw VieNeuError.synthesisFailed("ONNX Runtime is not available on this platform.")
         #endif
     }
 
-    public func runVectorEstimator(x: [[Float]], t: Float, cond: [[Float]], style: [[Float]]) async throws -> [[Float]] {
+    public func runVectorEstimator(x: [[Float]], t: Float, ctx: [[Float]], mask: [Bool], speakerEmbedding: [Float], style: [[Float]]) async throws -> [[Float]] {
         #if canImport(onnxruntime)
         guard let session = vectorSession else {
             throw VieNeuError.synthesisFailed("Vector estimator session not loaded.")
@@ -250,9 +259,9 @@ public actor ONNXEngine: ONNXInferenceEngine {
         let dim = x.first?.count ?? 144
         let xTensor = try ORTTensorHelper.createTransposedTensor(from: x, shape: [1, NSNumber(value: dim), NSNumber(value: frames)])
         let tTensor = try ORTTensorHelper.createTensor(from: [t], shape: [1])
-        let ctxTensor = try ORTTensorHelper.createTensor(from: cond, shape: [1, NSNumber(value: cond.count), NSNumber(value: cond.first?.count ?? 256)])
-        let maskTensor = try ORTTensorHelper.createTensor(from: Array(repeating: true, count: cond.count), shape: [1, NSNumber(value: cond.count)])
-        let spkTensor = try ORTTensorHelper.createTensor(from: Array(repeating: Float(0.0), count: 192), shape: [1, 192])
+        let ctxTensor = try ORTTensorHelper.createTensor(from: ctx, shape: [1, NSNumber(value: ctx.count), NSNumber(value: ctx.first?.count ?? 256)])
+        let maskTensor = try ORTTensorHelper.createTensor(from: mask, shape: [1, NSNumber(value: ctx.count)])
+        let spkTensor = try ORTTensorHelper.createTensor(from: speakerEmbedding, shape: [1, 192])
         let styleTensor = try ORTTensorHelper.createTensor(from: style, shape: [1, NSNumber(value: style.count), NSNumber(value: style.first?.count ?? 256)])
 
         let outputs = try session.run(
@@ -328,18 +337,9 @@ public actor ONNXEngine: ONNXInferenceEngine {
             throw VieNeuError.synthesisFailed("Codec encoder produced no outputs.")
         }
         let flat = try ORTTensorHelper.extractFloatArray(from: first)
-        let rows = 50
-        let cols = 256
-        var result = [[Float]](repeating: [Float](repeating: 0.0, count: cols), count: rows)
-        for r in 0..<rows {
-            for c in 0..<cols {
-                let idx = r * cols + c
-                if idx < flat.count {
-                    result[r][c] = flat[idx]
-                }
-            }
-        }
-        return result
+        let channels = 24
+        let frames = flat.count / channels
+        return TensorLayoutHelper.transposeFromChannelFirst(flat: flat, frames: frames, dim: channels)
         #else
         throw VieNeuError.synthesisFailed("ONNX Runtime is not available on this platform.")
         #endif

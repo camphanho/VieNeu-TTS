@@ -129,19 +129,28 @@ final class FlowSolverTests: XCTestCase {
 
     func testMockONNXEngineOutputs() async throws {
         let engine = MockONNXEngine()
-        let (mu, mask) = try await engine.runTextEncoder(tokenIDs: [1, 2, 3], speakerEmbedding: Array(repeating: 0.1, count: 192))
-        XCTAssertEqual(mu.count, 3)
-        XCTAssertEqual(mu[0].count, 256)
+        let style = Array(repeating: Array(repeating: Float(0.2), count: 256), count: 50)
+        let speaker = Array(repeating: Float(0.1), count: 192)
+        let (ctx, mask) = try await engine.runTextEncoder(tokenIDs: [1, 2, 3], style: style)
+        XCTAssertEqual(ctx.count, 3)
+        XCTAssertEqual(ctx[0].count, 256)
         XCTAssertEqual(mask.count, 3)
 
-        let durations = try await engine.runDurationPredictor(mu: mu)
-        XCTAssertEqual(durations.count, 3)
+        let frames = try await engine.runDurationPredictor(
+            ctx: ctx,
+            mask: mask,
+            speakerEmbedding: speaker,
+            speed: 1.0
+        )
+        XCTAssertGreaterThanOrEqual(frames, 2)
 
         let vector = try await engine.runVectorEstimator(
             x: [[1.0, 2.0]],
             t: 0.5,
-            cond: [[0.1]],
-            style: [[0.2]]
+            ctx: ctx,
+            mask: mask,
+            speakerEmbedding: speaker,
+            style: style
         )
         XCTAssertEqual(vector.count, 1)
         XCTAssertEqual(vector[0].count, 2)
@@ -153,12 +162,72 @@ final class FlowSolverTests: XCTestCase {
         XCTAssertEqual(spk.count, 192)
 
         let codec = try await engine.runCodecEncoder(audio: [0.1, 0.2])
-        XCTAssertEqual(codec.count, 50)
-        XCTAssertEqual(codec[0].count, 256)
+        XCTAssertEqual(codec.count, 6)
+        XCTAssertEqual(codec[0].count, 24)
 
-        let style = try await engine.runReferenceEncoder(refCodes: codec)
-        XCTAssertEqual(style.count, 50)
-        XCTAssertEqual(style[0].count, 256)
+        let encodedStyle = try await engine.runReferenceEncoder(refCodes: codec)
+        XCTAssertEqual(encodedStyle.count, 50)
+        XCTAssertEqual(encodedStyle[0].count, 256)
+    }
+
+    func testDurationFramesConvertsScalarLogSecondsUsingNanoFormula() {
+        XCTAssertEqual(ONNXEngine.durationFrames(logSeconds: 0.0, speed: 1.0), 16)
+        XCTAssertEqual(ONNXEngine.durationFrames(logSeconds: log(2.0), speed: 2.0), 16)
+        XCTAssertEqual(ONNXEngine.durationFrames(logSeconds: log(100.0), speed: 1.0), 234)
+        XCTAssertEqual(ONNXEngine.durationFrames(logSeconds: -100.0, speed: 1.0), 2)
+    }
+
+    func testTextEncoderAndVectorEstimatorPreserveVoiceConditioning() async throws {
+        let engine = ConditioningRecordingEngine()
+        let voice = VoiceProfile(
+            name: "Recorded",
+            speakerEmbedding: Array(repeating: 0.75, count: 192),
+            styleTokens: Array(repeating: Array(repeating: 0.5, count: 256), count: 50)
+        )
+        let tts = try await VieNeuTTS(config: MockVieNeuConfig(eulerSteps: 1, cfgScale: 1.0, onnxEngineOverride: engine))
+
+        _ = try await tts.synthesize(text: "xin chào", voice: voice)
+
+        let recording = await engine.recording
+        XCTAssertEqual(recording.textStyles.first, voice.styleTokens)
+        XCTAssertEqual(recording.durationSpeakerEmbeddings.first, voice.speakerEmbedding)
+        XCTAssertEqual(recording.vectorSpeakerEmbeddings.first, voice.speakerEmbedding)
+        XCTAssertEqual(recording.vectorStyles.first, voice.styleTokens)
+        XCTAssertEqual(recording.unconditionalCalls, 1)
+    }
+
+    private actor ConditioningRecordingEngine: ONNXInferenceEngine {
+        struct Recording: Sendable {
+            var textStyles = [[[Float]]]()
+            var durationSpeakerEmbeddings = [[Float]]()
+            var vectorSpeakerEmbeddings = [[Float]]()
+            var vectorStyles = [[[Float]]]()
+            var unconditionalCalls = 0
+        }
+
+        private(set) var recording = Recording()
+
+        func runTextEncoder(tokenIDs: [Int64], style: [[Float]]) async throws -> (ctx: [[Float]], mask: [Bool]) {
+            recording.textStyles.append(style)
+            return (Array(repeating: Array(repeating: 0.1, count: 256), count: tokenIDs.count), Array(repeating: true, count: tokenIDs.count))
+        }
+
+        func runDurationPredictor(ctx: [[Float]], mask: [Bool], speakerEmbedding: [Float], speed: Float) async throws -> Int {
+            recording.durationSpeakerEmbeddings.append(speakerEmbedding)
+            return 2
+        }
+
+        func runVectorEstimator(x: [[Float]], t: Float, ctx: [[Float]], mask: [Bool], speakerEmbedding: [Float], style: [[Float]]) async throws -> [[Float]] {
+            if ctx.allSatisfy({ $0.allSatisfy { $0 == 0 } }) {
+                recording.unconditionalCalls += 1
+            } else {
+                recording.vectorSpeakerEmbeddings.append(speakerEmbedding)
+                recording.vectorStyles.append(style)
+            }
+            return x
+        }
+
+        func runCodecDecoder(latents: [[Float]]) async throws -> [Float] { [0, 0] }
     }
 
     func testTensorLayoutHelperTranspositionRoundTrip() {

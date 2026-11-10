@@ -202,12 +202,14 @@ public actor VieNeuTTS {
 
         let tokenIDs = tokenizer.encode(phonemes: finalPhonemes)
 
-        let (mu, _) = try await engine.runTextEncoder(tokenIDs: tokenIDs, speakerEmbedding: voice.speakerEmbedding)
+        let (ctx, mask) = try await engine.runTextEncoder(tokenIDs: tokenIDs, style: voice.styleTokens)
 
-        let durations = try await engine.runDurationPredictor(mu: mu)
-        let totalDuration = durations.reduce(0, +)
-        let effectiveSpeed = max(config.speed, 0.01)
-        let totalFrames = max(2, Int(round(Float(totalDuration) / effectiveSpeed)))
+        let totalFrames = try await engine.runDurationPredictor(
+            ctx: ctx,
+            mask: mask,
+            speakerEmbedding: voice.speakerEmbedding,
+            speed: config.speed
+        )
 
         let dim = 144
         var initialNoise = [[Float]](repeating: [Float](repeating: 0.0, count: dim), count: totalFrames)
@@ -226,12 +228,20 @@ public actor VieNeuTTS {
             cfgScale: config.cfgScale,
             sway: config.sway,
             uncondEstimator: config.cfgScale > 0 ? { [engine = self.engine] x, t in
-                let nullCond = Array(repeating: Array(repeating: Float(0.0), count: 256), count: 2)
+                let nullCtx = Array(repeating: Array(repeating: Float(0.0), count: 256), count: 2)
+                let nullMask = Array(repeating: false, count: 2)
+                let nullSpeaker = Array(repeating: Float(0.0), count: 192)
                 let nullStyle = Array(repeating: Array(repeating: Float(0.0), count: 256), count: 50)
-                return try await engine.runVectorEstimator(x: x, t: t, cond: nullCond, style: nullStyle)
+                return try await engine.runVectorEstimator(
+                    x: x, t: t, ctx: nullCtx, mask: nullMask,
+                    speakerEmbedding: nullSpeaker, style: nullStyle
+                )
             } : nil,
             vectorEstimator: { [engine = self.engine] x, t in
-                return try await engine.runVectorEstimator(x: x, t: t, cond: mu, style: voice.styleTokens)
+                return try await engine.runVectorEstimator(
+                    x: x, t: t, ctx: ctx, mask: mask,
+                    speakerEmbedding: voice.speakerEmbedding, style: voice.styleTokens
+                )
             }
         )
 

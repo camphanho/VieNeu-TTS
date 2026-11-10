@@ -67,14 +67,50 @@ public actor VoiceCloner {
         // 3. Run acoustic codec encoder to extract reference latents
         let latents = try await onnxEngine.runCodecEncoder(samples: referenceSamples)
 
-        // 4. Run reference style encoder to extract style tokens (shape: [50, 256])
-        let styleTokens = try await onnxEngine.runReferenceEncoder(latents: latents)
+        // 4. Normalize [T, 24] codec latents and group six frames into [ceil(T / 6), 144].
+        // v3 Nano's default constants use unit scale and normalization when constants.npz is unavailable.
+        let normalizedLatents = Self.normalizeLatent(latents)
+        let groupedLatents = Self.groupLatent(normalizedLatents)
+
+        // 5. Run reference style encoder to extract style tokens (shape: [50, 256]).
+        let styleTokens = try await onnxEngine.runReferenceEncoder(latents: groupedLatents)
 
         return VoiceProfile(
             name: name,
             speakerEmbedding: speakerEmbedding,
             styleTokens: styleTokens
         )
+    }
+
+    /// Applies v3 Nano codec latent normalization. Unity constants are the compatible fallback
+    /// when a model bundle does not provide `constants.npz` values.
+    public static func normalizeLatent(
+        _ latents: [[Float]],
+        mean: [Float] = Array(repeating: 0, count: 24),
+        standardDeviation: [Float] = Array(repeating: 1, count: 24),
+        scale: Float = 1
+    ) -> [[Float]] {
+        latents.map { frame in
+            frame.enumerated().map { index, value in
+                let frameMean = index < mean.count ? mean[index] : 0
+                let frameStd = index < standardDeviation.count ? max(standardDeviation[index], 1e-6) : 1
+                return (value - frameMean) / frameStd * scale
+            }
+        }
+    }
+
+    /// Groups six sequential `[24]` codec latent frames into a single `[144]` reference frame,
+    /// zero-padding the final incomplete group.
+    public static func groupLatent(_ latents: [[Float]], factor: Int = 6) -> [[Float]] {
+        guard factor > 0, let channels = latents.first?.count else { return [] }
+        return stride(from: 0, to: latents.count, by: factor).map { start in
+            (0..<channels).flatMap { channel -> [Float] in
+                (0..<factor).map { offset in
+                    let index = start + offset
+                    return index < latents.count ? latents[index][channel] : 0
+                }
+            }
+        }
     }
 
     /// Trims leading and trailing silence from audio samples using frame-based RMS energy.

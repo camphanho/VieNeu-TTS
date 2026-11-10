@@ -105,6 +105,24 @@ final class VoiceClonerTests: XCTestCase {
         XCTAssertEqual(profile.styleTokens.first?.count, 256)
     }
 
+    func testNormalizeAndGroupLatentPadsFinalGroup() {
+        let latents = [
+            [1.0 as Float, 3.0],
+            [5.0, 7.0]
+        ]
+        let normalized = VoiceCloner.normalizeLatent(
+            latents,
+            mean: [1.0, 1.0],
+            standardDeviation: [2.0, 2.0],
+            scale: 2.0
+        )
+        XCTAssertEqual(normalized, [[0.0, 2.0], [4.0, 6.0]])
+
+        let grouped = VoiceCloner.groupLatent(normalized, factor: 3)
+        XCTAssertEqual(grouped.count, 1)
+        XCTAssertEqual(grouped[0], [0.0, 4.0, 0.0, 2.0, 6.0, 0.0])
+    }
+
     func testVoiceProfileMock() {
         let mock = VoiceProfile.mock(name: "CustomMock")
         XCTAssertEqual(mock.name, "CustomMock")

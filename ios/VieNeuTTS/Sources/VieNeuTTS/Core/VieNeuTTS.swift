@@ -24,6 +24,9 @@ public actor VieNeuTTS {
     /// Voice cloner for reference voice enrollment.
     public let voiceCloner: VoiceCloner
 
+    /// Optional dedicated v3 Turbo autoregressive inference engine.
+    public let turboEngine: (any V3TurboInferenceEngine)?
+
     /// Thread-safe cached preset voice profiles.
     private let presetVoiceStore = PresetVoiceStore()
 
@@ -79,6 +82,18 @@ public actor VieNeuTTS {
         }
 
         self.voiceCloner = VoiceCloner(onnxEngine: self.engine)
+
+        if config.mode == .v3turbo {
+            if let mock = config.onnxEngineOverride as? (any V3TurboInferenceEngine) {
+                self.turboEngine = mock
+            } else if config.modelProvider is MockModelProvider {
+                self.turboEngine = MockV3TurboEngine()
+            } else {
+                self.turboEngine = try? V3TurboEngine(modelProvider: config.modelProvider)
+            }
+        } else {
+            self.turboEngine = nil
+        }
     }
 
     // MARK: - Preset Voice Management
@@ -135,7 +150,7 @@ public actor VieNeuTTS {
         }
 
         var allSamples: [Float] = []
-        let sampleRate = 24000
+        let sampleRate = config.mode == .v3turbo ? 48000 : 24000
 
         for (index, chunk) in chunks.enumerated() {
             try Task.checkCancellation()
@@ -238,6 +253,20 @@ public actor VieNeuTTS {
         let normalized = (try? seaG2P.normalizePunctuation(text)) ?? text
         let phonemes = (try? seaG2P.phonemize(normalized)) ?? normalized
         let finalPhonemes = phonemes.isEmpty ? normalized : phonemes
+
+        if config.mode == .v3turbo {
+            let turbo = self.turboEngine ?? MockV3TurboEngine()
+            let samples = try await turbo.generate(
+                phonemes: finalPhonemes,
+                speakerEmbedding: voice.speakerEmbedding,
+                refCodes: nil,
+                temperature: config.temperature,
+                topK: config.topK,
+                topP: config.topP,
+                maxNewFrames: config.maxNewFrames
+            )
+            return AudioBuffer(samples: samples, sampleRate: 48000)
+        }
 
         let tokenIDs = tokenizer.encode(phonemes: finalPhonemes)
 

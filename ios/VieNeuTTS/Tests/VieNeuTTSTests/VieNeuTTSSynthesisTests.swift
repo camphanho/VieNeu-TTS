@@ -104,4 +104,11 @@ final class VieNeuTTSSynthesisTests: XCTestCase {
             }
         }
     }
+
+    func testV3TurboModeReports48kHzSampleRate() async throws {
+        let config = VieNeuConfig.mock(mode: .v3turbo)
+        let tts = try await VieNeuTTS(config: config)
+        let audio = try await tts.synthesize(text: "Xin chào", voice: VoiceProfile.mock())
+        XCTAssertEqual(audio.sampleRate, 48000)
+    }
 }

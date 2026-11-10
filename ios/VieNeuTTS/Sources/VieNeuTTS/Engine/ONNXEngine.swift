@@ -67,6 +67,18 @@ public extension ONNXInferenceEngine {
     func runReferenceEncoder(refCodes: [[Float]]) async throws -> [[Float]] {
         Array(repeating: Array(repeating: Float(0.0), count: 256), count: 50)
     }
+
+    func runSpeakerEncoder(mel: [[Float]]) async throws -> [Float] {
+        try await runSpeakerEncoder(melFilterbank: mel)
+    }
+
+    func runCodecEncoder(samples: [Float]) async throws -> [[Float]] {
+        try await runCodecEncoder(audio: samples)
+    }
+
+    func runReferenceEncoder(latents: [[Float]]) async throws -> [[Float]] {
+        try await runReferenceEncoder(refCodes: latents)
+    }
 }
 
 // MARK: - Mock ONNX Engine

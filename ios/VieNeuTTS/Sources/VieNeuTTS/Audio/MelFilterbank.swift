@@ -167,11 +167,29 @@ public final class MelFilterbank: Sendable {
             fft.forward(real: &realBuffer, imag: &imagBuffer)
 
             // 5. Power spectrum for bins 0...256
+            #if canImport(Accelerate)
+            realBuffer.withUnsafeMutableBufferPointer { rPtr in
+                imagBuffer.withUnsafeMutableBufferPointer { iPtr in
+                    var splitComplex = DSPSplitComplex(
+                        realp: rPtr.baseAddress!,
+                        imagp: iPtr.baseAddress!
+                    )
+                    var magnitudes = [Float](repeating: 0, count: 257)
+                    magnitudes.withUnsafeMutableBufferPointer { mPtr in
+                        powerSpectrum.withUnsafeMutableBufferPointer { pPtr in
+                            vDSP_zvabs(&splitComplex, 1, mPtr.baseAddress!, 1, 257)
+                            vDSP_vsq(mPtr.baseAddress!, 1, pPtr.baseAddress!, 1, 257)
+                        }
+                    }
+                }
+            }
+            #else
             for k in 0...256 {
                 let r = realBuffer[k]
                 let im = imagBuffer[k]
                 powerSpectrum[k] = r * r + im * im
             }
+            #endif
 
             // 6. Mel filterbank energies
             var logMel = [Float](repeating: 0, count: 80)
@@ -306,27 +324,129 @@ public final class MelFilterbank: Sendable {
         }
     }
 
-    /// Resamples mono float audio from `inRate` to `outRate` using linear interpolation.
+    /// Resamples mono float audio from `inRate` to `outRate`.
+    /// When downsampling (`inRate > outRate`), applies an anti-aliasing low-pass FIR filter
+    /// before decimation to prevent high frequencies from folding over into the Nyquist band.
     public static func resample(samples: [Float], from inRate: Int, to outRate: Int) -> [Float] {
         guard inRate != outRate, !samples.isEmpty else { return samples }
+
+        #if canImport(AVFoundation)
+        if let converted = resampleViaAVAudioConverter(samples: samples, from: inRate, to: outRate) {
+            return converted
+        }
+        #endif
+
+        let filtered: [Float]
+        if inRate > outRate {
+            filtered = applyAntiAliasingFilter(samples: samples, inRate: inRate, outRate: outRate)
+        } else {
+            filtered = samples
+        }
+
         let ratio = Double(inRate) / Double(outRate)
         let outCount = Int(round(Double(samples.count) / ratio))
         guard outCount > 0 else { return [] }
 
         var output = [Float](repeating: 0, count: outCount)
-        let maxInIndex = samples.count - 1
+        let maxInIndex = filtered.count - 1
 
         for i in 0..<outCount {
             let inPos = Double(i) * ratio
             let idx = Int(inPos)
             let frac = Float(inPos - Double(idx))
             if idx >= maxInIndex {
-                output[i] = samples[maxInIndex]
+                output[i] = filtered[maxInIndex]
             } else {
-                output[i] = samples[idx] * (1.0 - frac) + samples[idx + 1] * frac
+                output[i] = filtered[idx] * (1.0 - frac) + filtered[idx + 1] * frac
             }
         }
         return output
+    }
+
+    #if canImport(AVFoundation)
+    private static func resampleViaAVAudioConverter(samples: [Float], from inRate: Int, to outRate: Int) -> [Float]? {
+        guard let inFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: Double(inRate), channels: 1, interleaved: false),
+              let outFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: Double(outRate), channels: 1, interleaved: false),
+              let converter = AVAudioConverter(from: inFormat, to: outFormat) else {
+            return nil
+        }
+
+        let ratio = Double(outRate) / Double(inRate)
+        let outFrameCapacity = AVAudioFrameCount(ceil(Double(samples.count) * ratio)) + 64
+        guard let outBuffer = AVAudioPCMBuffer(pcmFormat: outFormat, frameCapacity: outFrameCapacity) else {
+            return nil
+        }
+
+        var hasProvidedData = false
+        var error: NSError?
+        let inputBlock: AVAudioConverterInputBlock = { inNumPackets, outStatus in
+            if hasProvidedData {
+                outStatus.pointee = .endOfStream
+                return nil
+            }
+            guard let inBuffer = AVAudioPCMBuffer(pcmFormat: inFormat, frameCapacity: AVAudioFrameCount(samples.count)) else {
+                outStatus.pointee = .endOfStream
+                return nil
+            }
+            inBuffer.frameLength = AVAudioFrameCount(samples.count)
+            if let channelData = inBuffer.floatChannelData {
+                samples.withUnsafeBufferPointer { ptr in
+                    guard let base = ptr.baseAddress else { return }
+                    channelData[0].initialize(from: base, count: samples.count)
+                }
+            }
+            hasProvidedData = true
+            outStatus.pointee = .haveData
+            return inBuffer
+        }
+
+        converter.convert(to: outBuffer, error: &error, withInputFrom: inputBlock)
+        if error != nil { return nil }
+        guard let channelData = outBuffer.floatChannelData else { return nil }
+        let outCount = Int(outBuffer.frameLength)
+        return Array(UnsafeBufferPointer(start: channelData[0], count: outCount))
+    }
+    #endif
+
+    /// Symmetric 31-tap Type-I linear-phase FIR low-pass filter with Hamming window.
+    private static func applyAntiAliasingFilter(samples: [Float], inRate: Int, outRate: Int) -> [Float] {
+        guard inRate > outRate, !samples.isEmpty else { return samples }
+        let numTaps = 31
+        let m = numTaps - 1
+        let halfM = Float(m) / 2.0
+        let fc = Float(outRate) * 0.475 / Float(inRate)
+
+        var h = [Float](repeating: 0, count: numTaps)
+        var sum: Float = 0
+        for k in 0..<numTaps {
+            let diff = Float(k) - halfM
+            let sinc: Float
+            if abs(diff) < 1e-6 {
+                sinc = 2.0 * fc
+            } else {
+                sinc = sin(2.0 * Float.pi * fc * diff) / (Float.pi * diff)
+            }
+            let win = 0.54 - 0.46 * cos(2.0 * Float.pi * Float(k) / Float(m))
+            let tap = sinc * win
+            h[k] = tap
+            sum += tap
+        }
+        guard sum > 0 else { return samples }
+        for k in 0..<numTaps { h[k] /= sum }
+
+        let count = samples.count
+        var filtered = [Float](repeating: 0, count: count)
+        let halfInt = numTaps / 2
+
+        for n in 0..<count {
+            var acc: Float = 0
+            for k in 0..<numTaps {
+                let idx = min(max(n + k - halfInt, 0), count - 1)
+                acc += h[k] * samples[idx]
+            }
+            filtered[n] = acc
+        }
+        return filtered
     }
 }
 

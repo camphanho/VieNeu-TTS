@@ -79,6 +79,21 @@ final class MelFilterbankTests: XCTestCase {
         XCTAssertEqual(sameRate, original)
     }
 
+    func testDownsamplingAttenuatesFrequenciesAboveTargetNyquist() {
+        // 10 kHz tone at 24 kHz sample rate (> 8 kHz target Nyquist for 16 kHz)
+        let sampleRate = 24000
+        let count = 2400 // 100ms
+        let highFreqTone = (0..<count).map { sin(2.0 * Float.pi * 10000.0 * Float($0) / Float(sampleRate)) }
+
+        let downsampled = MelFilterbank.resample(samples: highFreqTone, from: 24000, to: 16000)
+        XCTAssertEqual(downsampled.count, 1600)
+
+        // Check steady-state max amplitude (skipping FIR filter warm-up/cool-down edges)
+        let steadyState = downsampled[50..<(downsampled.count - 50)]
+        let maxAmp = steadyState.map { abs($0) }.max() ?? 1.0
+        XCTAssertLessThan(maxAmp, 0.15, "10kHz tone should be significantly attenuated by anti-aliasing filter when downsampling to 16kHz")
+    }
+
     func testDeterministicComputation() throws {
         let fbank = MelFilterbank()
         let sampleCount = 8000 // 0.5s @ 16kHz
@@ -118,11 +133,13 @@ final class MelFilterbankTests: XCTestCase {
             .truncatedWAVData,
             .fileReadError("missing"),
             .audioTooShort(samples: 10, minimum: 400),
-            .resamplingError("failed")
+            .resamplingError("failed"),
+            .invalidFormat("invalid")
         ]
         for err in errors {
             XCTAssertFalse(err.localizedDescription.isEmpty)
         }
+        XCTAssertTrue(AudioError.invalidFormat("bad format").localizedDescription.contains("Invalid audio format"))
     }
 
     private func makeTestStereoWav(sampleRate: Int, duration: Double) throws -> URL {

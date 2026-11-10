@@ -7,6 +7,7 @@ public enum AudioError: Error, LocalizedError, Equatable {
     case fileReadError(String)
     case audioTooShort(samples: Int, minimum: Int)
     case resamplingError(String)
+    case invalidFormat(String)
 
     public var errorDescription: String? {
         switch self {
@@ -22,6 +23,8 @@ public enum AudioError: Error, LocalizedError, Equatable {
             return "Audio too short: \(samples) samples < minimum \(minimum)"
         case .resamplingError(let msg):
             return "Resampling error: \(msg)"
+        case .invalidFormat(let msg):
+            return "Invalid audio format: \(msg)"
         }
     }
 }

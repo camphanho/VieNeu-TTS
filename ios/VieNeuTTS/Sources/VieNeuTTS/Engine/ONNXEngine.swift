@@ -447,9 +447,9 @@ enum ORTTensorHelper {
     }
 
     static func createTensor(from array: [Bool], shape: [NSNumber]) throws -> ORTValue {
-        var uint8Array = array.map { $0 ? UInt8(1) : UInt8(0) }
-        let data = NSMutableData(bytes: &uint8Array, length: uint8Array.count * MemoryLayout<UInt8>.size)
-        return try ORTValue(tensorData: data, elementType: .uInt8, shape: shape)
+        var boolArray = array.map { $0 ? UInt8(1) : UInt8(0) }
+        let data = NSMutableData(bytes: &boolArray, length: boolArray.count * MemoryLayout<UInt8>.size)
+        return try ORTValue(tensorData: data, elementType: .bool, shape: shape)
     }
 
     static func extractFloatArray(from value: ORTValue) throws -> [Float] {

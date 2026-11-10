@@ -5,7 +5,7 @@ edition = "2021"
 
 [lib]
 name = "sea_g2p_bridge"
-crate-type = ["staticlib", "cdylib", "rlib"]
+crate-type = ["staticlib", "rlib"]
 
 [dependencies]
 sea-g2p = { package = "sea-g2p-rs", git = "https://github.com/pnnbao97/sea-g2p", default-features = false }

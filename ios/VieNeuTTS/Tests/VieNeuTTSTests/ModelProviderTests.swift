@@ -199,6 +199,48 @@ final class ModelProviderTests: XCTestCase {
         }
     }
 
+    func testModelDownloaderSkipsExistingFilesWithoutChecksums() async throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        // Pre-create all required files with non-zero size
+        for filename in ModelDownloader.requiredFiles {
+            let fileURL = tempDir.appendingPathComponent(filename)
+            try "non-empty-model-content".write(to: fileURL, atomically: true, encoding: .utf8)
+        }
+
+        // Downloader with dummy URL and NO checksums
+        let dummyBaseURL = URL(string: "http://127.0.0.1:59999")!
+        let downloader = ModelDownloader(baseURL: dummyBaseURL, expectedChecksums: nil)
+
+        let provider = try await downloader.download(to: tempDir)
+        XCTAssertEqual(try provider.constantsURL().lastPathComponent, "constants.npz")
+    }
+
+    func testModelDownloaderPreservesCancellation() async throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let badBaseURL = URL(string: "http://127.0.0.1:59999/does-not-exist")!
+        let downloader = ModelDownloader(baseURL: badBaseURL)
+
+        let downloadTask = Task {
+            try await downloader.download(to: tempDir)
+        }
+        downloadTask.cancel()
+
+        do {
+            _ = try await downloadTask.value
+            XCTFail("Expected cancellation")
+        } catch is CancellationError {
+            // Expected
+        } catch {
+            XCTFail("Expected CancellationError, but got \(error)")
+        }
+    }
+
     func testVieNeuErrorDescriptions() {
         let notFound = VieNeuError.modelNotFound("model.onnx")
         XCTAssertNotNil(notFound.errorDescription)

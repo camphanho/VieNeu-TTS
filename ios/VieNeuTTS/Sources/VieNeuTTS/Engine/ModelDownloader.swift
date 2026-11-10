@@ -85,23 +85,33 @@ public actor ModelDownloader {
         var completedFiles = 0
 
         for filename in Self.requiredFiles {
+            try Task.checkCancellation()
+
             let destinationURL = targetDir.appendingPathComponent(filename)
 
             var needDownload = true
             if FileManager.default.fileExists(atPath: destinationURL.path) {
-                if let expectedHash = expectedChecksums?[filename],
-                   let existingData = try? Data(contentsOf: destinationURL) {
-                    let actualHash = SHA256Helper.hexString(for: existingData)
-                    if actualHash.lowercased() == expectedHash.lowercased() {
+                if let expectedHash = expectedChecksums?[filename] {
+                    if let existingData = try? Data(contentsOf: destinationURL) {
+                        let actualHash = SHA256Helper.hexString(for: existingData)
+                        if actualHash.lowercased() == expectedHash.lowercased() {
+                            needDownload = false
+                        }
+                    }
+                } else {
+                    let fileSize = (try? FileManager.default.attributesOfItem(atPath: destinationURL.path)[.size] as? UInt64) ?? 0
+                    if fileSize > 0 {
                         needDownload = false
                     }
                 }
             }
 
             if needDownload {
+                try Task.checkCancellation()
                 let remoteURL = downloadURL(for: filename)
                 do {
                     let (tempURL, response) = try await session.download(from: remoteURL)
+                    try Task.checkCancellation()
                     if let httpResponse = response as? HTTPURLResponse,
                        !(200...299).contains(httpResponse.statusCode) {
                         throw VieNeuError.downloadFailed(
@@ -113,9 +123,14 @@ public actor ModelDownloader {
                         try? FileManager.default.removeItem(at: destinationURL)
                     }
                     try FileManager.default.moveItem(at: tempURL, to: destinationURL)
+                } catch is CancellationError {
+                    throw CancellationError()
                 } catch let error as VieNeuError {
                     throw error
                 } catch {
+                    if Task.isCancelled {
+                        throw CancellationError()
+                    }
                     throw VieNeuError.downloadFailed(
                         "Failed to download \(filename): \(error.localizedDescription)"
                     )

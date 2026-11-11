@@ -201,7 +201,7 @@ pub extern "C" fn sea_g2p_phonemize(input: *const c_char) -> *mut c_char {
     }
 
     let normalizer = get_normalizer();
-    let normalized = normalizer.normalize(c_str, false);
+    let normalized = normalizer.normalize(c_str, true);
     let target = if normalized.is_empty() {
         c_str
     } else {

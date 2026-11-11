@@ -10,6 +10,7 @@ final class MelFilterbankTests: XCTestCase {
         XCTAssertFalse(mel.isEmpty)
         XCTAssertEqual(mel.count, 98)
         XCTAssertEqual(mel[0].count, 80) // 80 filter channels
+        print(">>> SWIFT FBANK FRAME 0 FIRST 5:", Array(mel[0].prefix(5)))
     }
 
     func testMeanNormalizationAcrossTime() throws {

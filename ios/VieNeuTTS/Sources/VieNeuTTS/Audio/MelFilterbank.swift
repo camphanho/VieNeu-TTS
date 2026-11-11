@@ -372,30 +372,31 @@ public final class MelFilterbank: Sendable {
         }
 
         let ratio = Double(outRate) / Double(inRate)
-        let outFrameCapacity = AVAudioFrameCount(ceil(Double(samples.count) * ratio)) + 64
+        let outFrameCapacity = AVAudioFrameCount(ceil(Double(samples.count) * ratio)) + 2048
         guard let outBuffer = AVAudioPCMBuffer(pcmFormat: outFormat, frameCapacity: outFrameCapacity) else {
             return nil
         }
 
-        var hasProvidedData = false
+        var sampleOffset = 0
         var error: NSError?
         let inputBlock: AVAudioConverterInputBlock = { inNumPackets, outStatus in
-            if hasProvidedData {
+            if sampleOffset >= samples.count {
                 outStatus.pointee = .endOfStream
                 return nil
             }
-            guard let inBuffer = AVAudioPCMBuffer(pcmFormat: inFormat, frameCapacity: AVAudioFrameCount(samples.count)) else {
+            let framesToProvide = min(Int(inNumPackets), samples.count - sampleOffset)
+            guard let inBuffer = AVAudioPCMBuffer(pcmFormat: inFormat, frameCapacity: AVAudioFrameCount(framesToProvide)) else {
                 outStatus.pointee = .endOfStream
                 return nil
             }
-            inBuffer.frameLength = AVAudioFrameCount(samples.count)
-            if let channelData = inBuffer.floatChannelData {
-                samples.withUnsafeBufferPointer { ptr in
+            inBuffer.frameLength = AVAudioFrameCount(framesToProvide)
+            if let inData = inBuffer.floatChannelData {
+                samples[sampleOffset..<(sampleOffset + framesToProvide)].withUnsafeBufferPointer { ptr in
                     guard let base = ptr.baseAddress else { return }
-                    channelData[0].initialize(from: base, count: samples.count)
+                    inData[0].initialize(from: base, count: framesToProvide)
                 }
             }
-            hasProvidedData = true
+            sampleOffset += framesToProvide
             outStatus.pointee = .haveData
             return inBuffer
         }

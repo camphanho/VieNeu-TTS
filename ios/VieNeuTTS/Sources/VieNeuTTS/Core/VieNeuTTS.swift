@@ -66,12 +66,14 @@ public actor VieNeuTTS {
         // Load conditioning constants
         let constantsDir = try? config.modelProvider.constantsURL().deletingLastPathComponent()
         let constants = ModelConstants.load(from: constantsDir)
-        self.nullSpeaker = constants.null_spk
-        self.nullStyle = constants.null_style
+        self.nullSpeaker = constants.null_spk.count == 192 ? constants.null_spk : Array(repeating: Float(0.0), count: 192)
+        self.nullStyle = (constants.null_style.count == 50 && constants.null_style.first?.count == 256)
+            ? constants.null_style
+            : Array(repeating: Array(repeating: Float(0.0), count: 256), count: 50)
 
         // Precompute null text context for CFG (v3 Nano): ids = [bos, eos] = [1, 2], mask = [true, true]
         if config.mode == .v3nano && config.cfgScale > 0 {
-            if let (ctx, mask) = try? await engine.runTextEncoder(tokenIDs: [1, 2], style: constants.null_style) {
+            if let (ctx, mask) = try? await engine.runTextEncoder(tokenIDs: [1, 2], style: self.nullStyle) {
                 self.nullCtx = ctx
                 self.nullMask = mask
             } else {
@@ -272,14 +274,17 @@ public actor VieNeuTTS {
             return AudioBuffer(samples: samples, sampleRate: 48000)
         }
 
+        let effectiveSpeaker = (voice.speakerEmbedding.count == 192) ? voice.speakerEmbedding : self.nullSpeaker
+        let effectiveStyle = (voice.styleTokens.count == 50 && voice.styleTokens.first?.count == 256) ? voice.styleTokens : self.nullStyle
+
         let tokenIDs = tokenizer.encode(phonemes: finalPhonemes)
 
-        let (ctx, mask) = try await engine.runTextEncoder(tokenIDs: tokenIDs, style: voice.styleTokens)
+        let (ctx, mask) = try await engine.runTextEncoder(tokenIDs: tokenIDs, style: effectiveStyle)
 
         let totalFrames = try await engine.runDurationPredictor(
             ctx: ctx,
             mask: mask,
-            speakerEmbedding: voice.speakerEmbedding,
+            speakerEmbedding: effectiveSpeaker,
             speed: config.speed
         )
 
@@ -308,7 +313,7 @@ public actor VieNeuTTS {
             vectorEstimator: { [engine = self.engine] x, t in
                 return try await engine.runVectorEstimator(
                     x: x, t: t, ctx: ctx, mask: mask,
-                    speakerEmbedding: voice.speakerEmbedding, style: voice.styleTokens
+                    speakerEmbedding: effectiveSpeaker, style: effectiveStyle
                 )
             }
         )

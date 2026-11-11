@@ -674,6 +674,15 @@ public final class TTSViewModel: ObservableObject {
         if selectedMode == .v3turbo {
             presetNames = [
                 "Nguyễn Ngọc Ngạn",
+                "An Nhiên",
+                "Giang (Podcast)",
+                "Mai (Tự nhiên)",
+                "Ngân Nguyễn (Truyền cảm)",
+                "Nhật Phong (Kể chuyện)",
+                "Quang Tiến",
+                "Tâm Nguyên (Thiếu nhi)",
+                "Thu Thủy (Kể chuyện)",
+                "Triệu Dương (Trầm ấm)",
                 "Mai Anh",
                 "Trúc Ly",
                 "Bảo Châu",
@@ -688,6 +697,16 @@ public final class TTSViewModel: ObservableObject {
             ]
         } else {
             presetNames = [
+                "Nguyễn Ngọc Ngạn",
+                "An Nhiên",
+                "Giang (Podcast)",
+                "Mai (Tự nhiên)",
+                "Ngân Nguyễn (Truyền cảm)",
+                "Nhật Phong (Kể chuyện)",
+                "Quang Tiến",
+                "Tâm Nguyên (Thiếu nhi)",
+                "Thu Thủy (Kể chuyện)",
+                "Triệu Dương (Trầm ấm)",
                 "Minh Quân",
                 "Mai Anh",
                 "Mạnh Dũng",

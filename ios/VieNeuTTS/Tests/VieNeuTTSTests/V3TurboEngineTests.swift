@@ -80,4 +80,24 @@ final class V3TurboEngineTests: XCTestCase {
         print(">>> REAL TURBO ENGINE GENERATED SAMPLES:", samples.count)
         XCTAssertGreaterThan(samples.count, 0)
     }
+
+    func testRealV3TurboNganSynthesis() async throws {
+        let dir = URL(fileURLWithPath: "/tmp/test_v3_turbo_models")
+        guard FileManager.default.fileExists(atPath: dir.appendingPathComponent("vieneu_prefill.onnx").path) else {
+            return
+        }
+        let provider = CachedModelProvider(directory: dir)
+        let config = VieNeuConfig(
+            mode: .v3turbo,
+            modelProvider: provider,
+            maxNewFrames: 50
+        )
+        let tts = try await VieNeuTTS(config: config)
+        let voice = try tts.loadPresetVoice(name: "Nguyễn Ngọc Ngạn")
+        print(">>> Loaded voice Nguyễn Ngọc Ngạn: refCodes count =", voice.refCodes?.count ?? 0)
+        let text = "Anh em nào phải người xa, Cùng chung bác mẹ, một nhà cùng thân."
+        let audio = try await tts.synthesize(text: text, voice: voice)
+        print(">>> SYNTHESIZED AUDIO SAMPLES:", audio.samples.count, "duration:", audio.duration)
+        XCTAssertGreaterThan(audio.samples.count, 0)
+    }
 }

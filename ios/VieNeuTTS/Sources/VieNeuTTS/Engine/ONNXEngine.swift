@@ -422,8 +422,18 @@ public enum TensorLayoutHelper {
 #if canImport(OnnxRuntimeBindings) || canImport(onnxruntime)
 enum ORTTensorHelper {
     static func createTensor(from array: [Float], shape: [NSNumber]) throws -> ORTValue {
-        var mutableArray = array
-        let data = NSMutableData(bytes: &mutableArray, length: array.count * MemoryLayout<Float>.size)
+        let expectedCount = shape.reduce(1) { $0 * $1.intValue }
+        var mutableArray: [Float]
+        if expectedCount > 0 && array.count != expectedCount {
+            if array.count < expectedCount {
+                mutableArray = array + [Float](repeating: 0.0, count: expectedCount - array.count)
+            } else {
+                mutableArray = Array(array.prefix(expectedCount))
+            }
+        } else {
+            mutableArray = array
+        }
+        let data = NSMutableData(bytes: &mutableArray, length: mutableArray.count * MemoryLayout<Float>.size)
         return try ORTValue(tensorData: data, elementType: .float, shape: shape)
     }
 
@@ -443,13 +453,34 @@ enum ORTTensorHelper {
     }
 
     static func createTensor(from array: [Int64], shape: [NSNumber]) throws -> ORTValue {
-        var mutableArray = array
-        let data = NSMutableData(bytes: &mutableArray, length: array.count * MemoryLayout<Int64>.size)
+        let expectedCount = shape.reduce(1) { $0 * $1.intValue }
+        var mutableArray: [Int64]
+        if expectedCount > 0 && array.count != expectedCount {
+            if array.count < expectedCount {
+                mutableArray = array + [Int64](repeating: 0, count: expectedCount - array.count)
+            } else {
+                mutableArray = Array(array.prefix(expectedCount))
+            }
+        } else {
+            mutableArray = array
+        }
+        let data = NSMutableData(bytes: &mutableArray, length: mutableArray.count * MemoryLayout<Int64>.size)
         return try ORTValue(tensorData: data, elementType: .int64, shape: shape)
     }
 
     static func createTensor(from array: [Bool], shape: [NSNumber]) throws -> ORTValue {
-        var boolArray = array.map { $0 ? UInt8(1) : UInt8(0) }
+        let expectedCount = shape.reduce(1) { $0 * $1.intValue }
+        var boolArray: [UInt8]
+        let mapped = array.map { $0 ? UInt8(1) : UInt8(0) }
+        if expectedCount > 0 && mapped.count != expectedCount {
+            if mapped.count < expectedCount {
+                boolArray = mapped + [UInt8](repeating: 0, count: expectedCount - mapped.count)
+            } else {
+                boolArray = Array(mapped.prefix(expectedCount))
+            }
+        } else {
+            boolArray = mapped
+        }
         let data = NSMutableData(bytes: &boolArray, length: boolArray.count * MemoryLayout<UInt8>.size)
         return try ORTValue(tensorData: data, elementType: .bool, shape: shape)
     }

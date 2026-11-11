@@ -271,11 +271,12 @@ public final class TTSViewModel: ObservableObject {
             let activeTTS = try await prepareTTSInstance(reusing: currentTTS)
             let stream = activeTTS.synthesizeStream(text: trimmed, voice: selectedVoice)
 
+            let sampleRate = selectedMode == .v3turbo ? 48000 : 24000
             for try await chunk in stream {
                 self.activeStreamChunks.append(chunk)
                 allSamples.append(contentsOf: chunk.audio.samples)
                 if chunk.pauseAfter > 0 {
-                    let silenceSamples = Int(chunk.pauseAfter * 24000.0)
+                    let silenceSamples = Int(chunk.pauseAfter * Float(sampleRate))
                     allSamples.append(contentsOf: [Float](repeating: 0.0, count: silenceSamples))
                 }
 
@@ -290,7 +291,7 @@ public final class TTSViewModel: ObservableObject {
             }
 
             let elapsed = Date().timeIntervalSince(startTime)
-            let combinedBuffer = AudioBuffer(samples: allSamples, sampleRate: 24000)
+            let combinedBuffer = AudioBuffer(samples: allSamples, sampleRate: sampleRate)
             self.generationTime = elapsed
             self.audioDuration = combinedBuffer.duration
             self.rtf = combinedBuffer.duration > 0 ? (elapsed / combinedBuffer.duration) : 0.0

@@ -198,7 +198,6 @@ public actor V3TurboEngine: V3TurboInferenceEngine {
         let prefillOutputNames = Set(try prefillSess.outputNames())
         let acousticOutputNames = Set(try acousticSess.outputNames())
         let decodeOutputNames = Set(try decodeSess.outputNames())
-        let codecOutputNames = Set(try codecDecSess.outputNames())
 
         let anchor = try weights.speakerAnchor(for: speakerEmbedding)
 
@@ -412,15 +411,28 @@ public actor V3TurboEngine: V3TurboInferenceEngine {
 
         let codecOutputs = try codecDecSess.run(
             withInputs: ["audio_codes": codesTensor, "audio_code_lengths": lenTensor],
-            outputNames: codecOutputNames,
+            outputNames: ["audio"],
             runOptions: nil
         )
 
-        if let audioOut = codecOutputs.values.first {
-            return try ORTTensorHelper.extractFloatArray(from: audioOut)
+        guard let audioVal = codecOutputs["audio"] else {
+            return []
         }
+        let flat = try ORTTensorHelper.extractFloatArray(from: audioVal)
+        guard flat.count > 0 else { return [] }
 
-        return [Float](repeating: 0.0, count: totalFrames * samplesPerFrame)
+        // MOSS ONNX codec outputs (1, 2, audio_length) stereo float32.
+        // Downmix stereo to mono by averaging the two channels: (ch0 + ch1) / 2
+        if flat.count % 2 == 0 && flat.count >= samplesPerFrame * 2 {
+            let audioLength = flat.count / 2
+            var mono = [Float](repeating: 0.0, count: audioLength)
+            for i in 0..<audioLength {
+                mono[i] = (flat[i] + flat[audioLength + i]) * 0.5
+            }
+            return mono
+        } else {
+            return flat
+        }
         #else
         let count = max(2, min(maxNewFrames, 10))
         return [Float](repeating: 0.05, count: count * samplesPerFrame)

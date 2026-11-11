@@ -81,7 +81,7 @@ public actor VieNeuTTS {
             self.nullMask = []
         }
 
-        self.voiceCloner = VoiceCloner(onnxEngine: self.engine)
+        self.voiceCloner = VoiceCloner(onnxEngine: self.engine, modelProvider: config.modelProvider)
 
         if config.mode == .v3turbo {
             if let mock = config.onnxEngineOverride as? (any V3TurboInferenceEngine) {

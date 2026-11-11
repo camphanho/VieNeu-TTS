@@ -9,18 +9,24 @@ public actor VoiceCloner {
     /// Neural inference engine executing speaker, codec, and reference encoders.
     public let onnxEngine: ONNXInferenceEngine
 
+    /// Model provider resolving model asset locations such as `constants.npz`.
+    public let modelProvider: (any ModelProvider)?
+
     /// Filterbank computing Kaldi-compatible 80-bin mel spectrograms.
     private let melFilterbank: MelFilterbank
 
     /// Initializes a new voice cloner instance.
     /// - Parameters:
     ///   - onnxEngine: The neural inference engine conforming to `ONNXInferenceEngine`.
+    ///   - modelProvider: Optional model provider resolving `constants.npz`.
     ///   - melFilterbank: Pre-initialized `MelFilterbank` (defaults to a new instance).
     public init(
         onnxEngine: ONNXInferenceEngine,
+        modelProvider: (any ModelProvider)? = nil,
         melFilterbank: MelFilterbank = MelFilterbank()
     ) {
         self.onnxEngine = onnxEngine
+        self.modelProvider = modelProvider
         self.melFilterbank = melFilterbank
     }
 
@@ -89,7 +95,8 @@ public actor VoiceCloner {
 
         // 4. Normalize [T, 24] codec latents using model constants, group by 6 frames,
         // and crop to min(5.0 * 15.625, 140) = 78 frames as in Python reference.
-        let constants = ModelConstants.load()
+        let constantsDir = try? modelProvider?.constantsURL().deletingLastPathComponent()
+        let constants = ModelConstants.load(from: constantsDir)
         let normalizedLatents = Self.normalizeLatent(
             latents,
             mean: constants.latent_mean,

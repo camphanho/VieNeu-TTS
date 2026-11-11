@@ -669,63 +669,8 @@ public final class TTSViewModel: ObservableObject {
 
     /// Reloads preset voices and enrolled custom voices for the active engine.
     private func reloadVoices(tts: VieNeuTTS) async {
-        var voices: [VoiceProfile] = []
-        let presetNames: [String]
-        if selectedMode == .v3turbo {
-            presetNames = [
-                "Nguyễn Ngọc Ngạn",
-                "An Nhiên",
-                "Giang (Podcast)",
-                "Mai (Tự nhiên)",
-                "Ngân Nguyễn (Truyền cảm)",
-                "Nhật Phong (Kể chuyện)",
-                "Quang Tiến",
-                "Tâm Nguyên (Thiếu nhi)",
-                "Thu Thủy (Kể chuyện)",
-                "Triệu Dương (Trầm ấm)",
-                "Mai Anh",
-                "Trúc Ly",
-                "Bảo Châu",
-                "Quỳnh Anh",
-                "Minh Quang",
-                "Hà Phương",
-                "Ngọc Huyền",
-                "Quốc Tuấn",
-                "Hải Đăng",
-                "Thanh Tùng",
-                "Thiện Minh"
-            ]
-        } else {
-            presetNames = [
-                "Nguyễn Ngọc Ngạn",
-                "An Nhiên",
-                "Giang (Podcast)",
-                "Mai (Tự nhiên)",
-                "Ngân Nguyễn (Truyền cảm)",
-                "Nhật Phong (Kể chuyện)",
-                "Quang Tiến",
-                "Tâm Nguyên (Thiếu nhi)",
-                "Thu Thủy (Kể chuyện)",
-                "Triệu Dương (Trầm ấm)",
-                "Minh Quân",
-                "Mai Anh",
-                "Mạnh Dũng",
-                "Đức Trí",
-                "Hữu Quân",
-                "Anh Khôi",
-                "Trúc Ly",
-                "Mỹ Duyên",
-                "Xuân Tiên",
-                "Adam",
-                "Ái Hân"
-            ]
-        }
+        var voices = tts.availablePresetVoices()
 
-        for name in presetNames {
-            if let v = try? tts.loadPresetVoice(name: name) {
-                voices.append(v)
-            }
-        }
         if voices.isEmpty {
             voices.append(VoiceProfile.mock(name: selectedMode == .v3turbo ? "Nguyễn Ngọc Ngạn" : "Minh Quân"))
         }
@@ -744,6 +689,10 @@ public final class TTSViewModel: ObservableObject {
     /// Reuses existing ONNX sessions while updating synthesis parameters like eulerSteps and speed.
     private func prepareTTSInstance(reusing existing: VieNeuTTS) async throws -> VieNeuTTS {
         if existing.config.mode == selectedMode && existing.config.eulerSteps == eulerSteps && abs(existing.config.speed - speed) < 1e-4 {
+            return existing
+        }
+
+        guard existing.config.mode == selectedMode else {
             return existing
         }
 

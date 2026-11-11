@@ -224,52 +224,51 @@ public final class V3TurboWeights: Sendable {
         guard data.count > 1000 else { return nil }
 
         var arrays: [String: [Float]] = [:]
-        let bytes = [UInt8](data)
-        let total = bytes.count
+        let total = data.count
 
-        var pos = 0
-        while pos + 46 <= total {
-            if bytes[pos] == 0x50 && bytes[pos + 1] == 0x4b && bytes[pos + 2] == 0x01 && bytes[pos + 3] == 0x02 {
-                let compSize = Int(readUInt32(bytes: bytes, offset: pos + 20))
-                let fnLen = Int(readUInt16(bytes: bytes, offset: pos + 28))
-                let extraLen = Int(readUInt16(bytes: bytes, offset: pos + 30))
-                let commentLen = Int(readUInt16(bytes: bytes, offset: pos + 32))
-                let localHdrOffset = Int(readUInt32(bytes: bytes, offset: pos + 42))
+        data.withUnsafeBytes { (rawPtr: UnsafeRawBufferPointer) in
+            guard let bytes = rawPtr.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
+            var pos = 0
+            while pos + 46 <= total {
+                if bytes[pos] == 0x50 && bytes[pos + 1] == 0x4b && bytes[pos + 2] == 0x01 && bytes[pos + 3] == 0x02 {
+                    let compSize = Int(readUInt32(ptr: bytes, offset: pos + 20))
+                    let fnLen = Int(readUInt16(ptr: bytes, offset: pos + 28))
+                    let extraLen = Int(readUInt16(ptr: bytes, offset: pos + 30))
+                    let commentLen = Int(readUInt16(ptr: bytes, offset: pos + 32))
+                    let localHdrOffset = Int(readUInt32(ptr: bytes, offset: pos + 42))
 
-                if pos + 46 + fnLen <= total {
-                    let nameBytes = Array(bytes[(pos + 46)..<(pos + 46 + fnLen)])
-                    let name = String(decoding: nameBytes, as: UTF8.self).replacingOccurrences(of: ".npy", with: "")
+                    if pos + 46 + fnLen <= total {
+                        let nameString = String(decoding: UnsafeBufferPointer(start: bytes.advanced(by: pos + 46), count: fnLen), as: UTF8.self).replacingOccurrences(of: ".npy", with: "")
 
-                    if localHdrOffset + 30 <= total {
-                        let locFnLen = Int(readUInt16(bytes: bytes, offset: localHdrOffset + 26))
-                        let locExtraLen = Int(readUInt16(bytes: bytes, offset: localHdrOffset + 28))
-                        let dataStart = localHdrOffset + 30 + locFnLen + locExtraLen
+                        if localHdrOffset + 30 <= total {
+                            let locFnLen = Int(readUInt16(ptr: bytes, offset: localHdrOffset + 26))
+                            let locExtraLen = Int(readUInt16(ptr: bytes, offset: localHdrOffset + 28))
+                            let dataStart = localHdrOffset + 30 + locFnLen + locExtraLen
 
-                        if dataStart + compSize <= total && compSize >= 16 {
-                            // \x93NUMPY header check
-                            if bytes[dataStart] == 0x93 && bytes[dataStart + 1] == 0x4e && bytes[dataStart + 2] == 0x55 &&
-                               bytes[dataStart + 3] == 0x4d && bytes[dataStart + 4] == 0x50 && bytes[dataStart + 5] == 0x59 {
-                                let hdrLen = Int(readUInt16(bytes: bytes, offset: dataStart + 8))
-                                let floatStart = dataStart + 10 + hdrLen
-                                let floatBytesCount = compSize - (10 + hdrLen)
-                                if floatBytesCount > 0 && floatStart + floatBytesCount <= total {
-                                    let floatCount = floatBytesCount / 4
-                                    var floats = [Float](repeating: 0.0, count: floatCount)
-                                    data.withUnsafeBytes { rawPtr in
+                            if dataStart + compSize <= total && compSize >= 16 {
+                                // \x93NUMPY header check
+                                if bytes[dataStart] == 0x93 && bytes[dataStart + 1] == 0x4e && bytes[dataStart + 2] == 0x55 &&
+                                   bytes[dataStart + 3] == 0x4d && bytes[dataStart + 4] == 0x50 && bytes[dataStart + 5] == 0x59 {
+                                    let hdrLen = Int(readUInt16(ptr: bytes, offset: dataStart + 8))
+                                    let floatStart = dataStart + 10 + hdrLen
+                                    let floatBytesCount = compSize - (10 + hdrLen)
+                                    if floatBytesCount > 0 && floatStart + floatBytesCount <= total {
+                                        let floatCount = floatBytesCount / 4
+                                        var floats = [Float](repeating: 0.0, count: floatCount)
                                         let src = rawPtr.baseAddress!.advanced(by: floatStart)
                                         floats.withUnsafeMutableBytes { dst in
                                             dst.baseAddress!.copyMemory(from: src, byteCount: floatCount * 4)
                                         }
+                                        arrays[nameString] = floats
                                     }
-                                    arrays[name] = floats
                                 }
                             }
                         }
                     }
+                    pos += 46 + fnLen + extraLen + commentLen
+                } else {
+                    pos += 1
                 }
-                pos += 46 + fnLen + extraLen + commentLen
-            } else {
-                pos += 1
             }
         }
 
@@ -295,15 +294,15 @@ public final class V3TurboWeights: Sendable {
         )
     }
 
-    private static func readUInt16(bytes: [UInt8], offset: Int) -> UInt16 {
-        UInt16(bytes[offset]) | (UInt16(bytes[offset + 1]) << 8)
+    private static func readUInt16(ptr: UnsafePointer<UInt8>, offset: Int) -> UInt16 {
+        UInt16(ptr[offset]) | (UInt16(ptr[offset + 1]) << 8)
     }
 
-    private static func readUInt32(bytes: [UInt8], offset: Int) -> UInt32 {
-        UInt32(bytes[offset]) |
-        (UInt32(bytes[offset + 1]) << 8) |
-        (UInt32(bytes[offset + 2]) << 16) |
-        (UInt32(bytes[offset + 3]) << 24)
+    private static func readUInt32(ptr: UnsafePointer<UInt8>, offset: Int) -> UInt32 {
+        UInt32(ptr[offset]) |
+        (UInt32(ptr[offset + 1]) << 8) |
+        (UInt32(ptr[offset + 2]) << 16) |
+        (UInt32(ptr[offset + 3]) << 24)
     }
 
     /// Creates a mock weights container for deterministic testing.

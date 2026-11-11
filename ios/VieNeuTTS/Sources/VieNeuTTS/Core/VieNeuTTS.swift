@@ -132,6 +132,11 @@ public actor VieNeuTTS {
         throw VieNeuError.modelNotFound("Preset voice '\(name)' not found.")
     }
 
+    /// Returns all available preset voice profiles configured for the current model architecture.
+    public nonisolated func availablePresetVoices() -> [VoiceProfile] {
+        presetVoiceStore.allVoices(from: config.modelProvider, mode: config.mode)
+    }
+
     // MARK: - Speech Synthesis
 
     /// Synthesizes text into a complete, concatenated `AudioBuffer`.
@@ -429,5 +434,12 @@ private final class PresetVoiceStore: @unchecked Sendable {
             }
             break
         }
+    }
+
+    func allVoices(from modelProvider: any ModelProvider, mode: VieNeuModelMode) -> [VoiceProfile] {
+        loadIfNeeded(from: modelProvider, mode: mode)
+        lock.lock()
+        defer { lock.unlock() }
+        return Array(voices.values).sorted(by: { $0.name < $1.name })
     }
 }

@@ -100,4 +100,70 @@ final class V3TurboEngineTests: XCTestCase {
         print(">>> SYNTHESIZED AUDIO SAMPLES:", audio.samples.count, "duration:", audio.duration)
         XCTAssertGreaterThan(audio.samples.count, 0)
     }
+
+    func testAllTurboVoicesSynthesis() async throws {
+        let dir = URL(fileURLWithPath: "/tmp/test_v3_turbo_models")
+        guard FileManager.default.fileExists(atPath: dir.appendingPathComponent("vieneu_prefill.onnx").path) else {
+            return
+        }
+        let provider = CachedModelProvider(directory: dir)
+        let config = VieNeuConfig(
+            mode: .v3turbo,
+            modelProvider: provider,
+            maxNewFrames: 5
+        )
+        let tts = try await VieNeuTTS(config: config)
+        let testVoices = [
+            "An Nhiên",
+            "Giang (Podcast)",
+            "Mai (Tự nhiên)",
+            "Mai Anh",
+            "Trúc Ly",
+            "Triệu Dương (Trầm ấm)",
+            "Quang Tiến",
+            "Ngân Nguyễn (Truyền cảm)",
+            "Tâm Nguyên (Thiếu nhi)",
+            "Thu Thủy (Kể chuyện)"
+        ]
+        for name in testVoices {
+            print(">>> Testing voice:", name)
+            let voice = try tts.loadPresetVoice(name: name)
+            print("  refCodes count:", voice.refCodes?.count ?? 0, "spk:", voice.speakerEmbedding.count)
+            let audio = try await tts.synthesize(text: "Xin chào bạn.", voice: voice)
+            print("  Generated audio samples:", audio.samples.count)
+            XCTAssertGreaterThan(audio.samples.count, 0)
+        }
+    }
+
+    func testRealNanoVoicesSynthesis() async throws {
+        #if canImport(OnnxRuntimeBindings)
+        let dir = URL(fileURLWithPath: "/home/camph/.cache/huggingface/hub/models--pnnbao-ump--VieNeu-TTS-v3-Nano/snapshots/aba295eb96a6fa6003ebe417cc1f2802a7adc1dc")
+        guard FileManager.default.fileExists(atPath: dir.appendingPathComponent("text_encoder.onnx").path) else {
+            return
+        }
+        let provider = CachedModelProvider(directory: dir)
+        let config = VieNeuConfig(
+            mode: .v3nano,
+            modelProvider: provider,
+            eulerSteps: 4
+        )
+        let tts = try await VieNeuTTS(config: config)
+        let testVoices = [
+            "Minh Quân",
+            "An Nhiên",
+            "Nguyễn Ngọc Ngạn",
+            "Giang (Podcast)",
+            "Mai (Tự nhiên)",
+            "Mai Anh"
+        ]
+        for name in testVoices {
+            print(">>> Testing Nano voice:", name)
+            let voice = try tts.loadPresetVoice(name: name)
+            print("  style count:", voice.styleTokens.count, "spk:", voice.speakerEmbedding.count)
+            let audio = try await tts.synthesize(text: "Xin chào bạn.", voice: voice)
+            print("  Nano audio samples:", audio.samples.count)
+            XCTAssertGreaterThan(audio.samples.count, 0)
+        }
+        #endif
+    }
 }

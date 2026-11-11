@@ -316,7 +316,8 @@ public struct VoiceCloningView: View {
     }
 
     private func voiceRow(_ voice: VoiceProfile) -> some View {
-        let isPreset = (voice.name == "Minh Quân" || voice.name == "Mai Anh")
+        let presetNames: Set<String> = ["Minh Quân", "Nguyễn Ngọc Ngạn", "Mai Anh", "Mạnh Dũng", "Đức Trí", "Hữu Quân", "Anh Khôi", "Trúc Ly", "Mỹ Duyên", "Xuân Tiên", "Adam", "Ái Hân"]
+        let isPreset = presetNames.contains(voice.name)
         let isSelected = (voice.name == viewModel.selectedVoice.name)
 
         return HStack(spacing: 12) {
@@ -358,6 +359,18 @@ public struct VoiceCloningView: View {
                     .imageScale(.medium)
             }
             .buttonStyle(.plain)
+
+            // Delete button for custom voices
+            if !isPreset {
+                Button(action: {
+                    viewModel.deleteCustomVoice(voice)
+                }) {
+                    Image(systemName: "trash")
+                        .foregroundColor(.red.opacity(0.8))
+                        .imageScale(.medium)
+                }
+                .buttonStyle(.plain)
+            }
         }
         .padding(10)
         .background(

@@ -20,6 +20,10 @@
     <string>1</string>
     <key>LSRequiresIPhoneOS</key>
     <true/>
+    <key>UIFileSharingEnabled</key>
+    <true/>
+    <key>LSSupportsOpeningDocumentsInPlace</key>
+    <true/>
     <key>NSMicrophoneUsageDescription</key>
     <string>Ứng dụng cần quyền truy cập microphone để ghi âm mẫu giọng nói (3-8 giây) phục vụ tính năng nhân bản giọng đọc.</string>
     <key>UILaunchScreen</key>

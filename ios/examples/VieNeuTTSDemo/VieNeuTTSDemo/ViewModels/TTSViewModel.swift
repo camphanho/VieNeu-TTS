@@ -168,7 +168,20 @@ public final class TTSViewModel: ObservableObject {
 
             // Load preset voices
             var voices: [VoiceProfile] = []
-            let presetNames = ["Minh Quân", "Mai Anh", "Tuấn Dũng", "Thảo Trang", "Quỳnh Như", "Hồng Đăng", "Bảo Long", "Văn Dũng", "Adam"]
+            let presetNames = [
+                "Minh Quân",
+                "Nguyễn Ngọc Ngạn",
+                "Mai Anh",
+                "Mạnh Dũng",
+                "Đức Trí",
+                "Hữu Quân",
+                "Anh Khôi",
+                "Trúc Ly",
+                "Mỹ Duyên",
+                "Xuân Tiên",
+                "Adam",
+                "Ái Hân"
+            ]
             for name in presetNames {
                 if let v = try? ttsInstance.loadPresetVoice(name: name) {
                     voices.append(v)
@@ -351,7 +364,11 @@ public final class TTSViewModel: ObservableObject {
             let profile = try await currentTTS.cloneVoice(from: recordedURL, name: trimmedName)
             saveCustomVoiceToDisk(profile)
 
-            self.availableVoices.append(profile)
+            if let existingIndex = self.availableVoices.firstIndex(where: { $0.name == trimmedName }) {
+                self.availableVoices[existingIndex] = profile
+            } else {
+                self.availableVoices.append(profile)
+            }
             self.selectedVoice = profile
             self.isSynthesizing = false
             self.statusMessage = "Nhân bản giọng '\(trimmedName)' thành công!"
@@ -653,6 +670,18 @@ public final class TTSViewModel: ObservableObject {
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         }
         return dir
+    }
+
+    public func deleteCustomVoice(_ profile: VoiceProfile) {
+        let dir = customVoicesDirectory()
+        let safeName = profile.name.replacingOccurrences(of: " ", with: "_")
+        let fileURL = dir.appendingPathComponent("\(safeName).json")
+        try? FileManager.default.removeItem(at: fileURL)
+        availableVoices.removeAll { $0.name == profile.name }
+        if selectedVoice.name == profile.name {
+            selectedVoice = availableVoices.first ?? VoiceProfile.mock(name: "Minh Quân")
+        }
+        statusMessage = "Đã xóa giọng '\(profile.name)'."
     }
 
     private func saveCustomVoiceToDisk(_ profile: VoiceProfile) {

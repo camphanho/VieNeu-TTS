@@ -137,16 +137,32 @@ public actor V3TurboEngine: V3TurboInferenceEngine {
         self.sessionOptions = opts
 
         if let prefillURL = try? modelProvider.modelURL(for: "vieneu_prefill.onnx") {
-            self.prefillSession = try? ORTSession(env: ortEnv, modelPath: prefillURL.path, sessionOptions: opts)
+            do {
+                self.prefillSession = try ORTSession(env: ortEnv, modelPath: prefillURL.path, sessionOptions: opts)
+            } catch {
+                throw VieNeuError.synthesisFailed("Failed to load vieneu_prefill.onnx: \(error.localizedDescription)")
+            }
         }
         if let decodeURL = try? modelProvider.modelURL(for: "vieneu_decode_step.onnx") {
-            self.decodeSession = try? ORTSession(env: ortEnv, modelPath: decodeURL.path, sessionOptions: opts)
+            do {
+                self.decodeSession = try ORTSession(env: ortEnv, modelPath: decodeURL.path, sessionOptions: opts)
+            } catch {
+                throw VieNeuError.synthesisFailed("Failed to load vieneu_decode_step.onnx: \(error.localizedDescription)")
+            }
         }
         if let acousticURL = try? modelProvider.modelURL(for: "vieneu_acoustic_cached.onnx") {
-            self.acousticSession = try? ORTSession(env: ortEnv, modelPath: acousticURL.path, sessionOptions: opts)
+            do {
+                self.acousticSession = try ORTSession(env: ortEnv, modelPath: acousticURL.path, sessionOptions: opts)
+            } catch {
+                throw VieNeuError.synthesisFailed("Failed to load vieneu_acoustic_cached.onnx: \(error.localizedDescription)")
+            }
         }
         if let codecURL = try? modelProvider.modelURL(for: "moss_audio_tokenizer_decode_full.onnx") {
-            self.codecDecoderSession = try? ORTSession(env: ortEnv, modelPath: codecURL.path, sessionOptions: opts)
+            do {
+                self.codecDecoderSession = try ORTSession(env: ortEnv, modelPath: codecURL.path, sessionOptions: opts)
+            } catch {
+                throw VieNeuError.synthesisFailed("Failed to load moss_audio_tokenizer_decode_full.onnx: \(error.localizedDescription)")
+            }
         }
         #endif
     }

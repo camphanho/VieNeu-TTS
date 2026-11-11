@@ -45,6 +45,8 @@ public actor VieNeuTTS {
 
         if let overrideEngine = config.onnxEngineOverride {
             self.engine = overrideEngine
+        } else if config.mode == .v3turbo {
+            self.engine = MockONNXEngine()
         } else {
             self.engine = try ONNXEngine(modelProvider: config.modelProvider)
         }
@@ -67,8 +69,8 @@ public actor VieNeuTTS {
         self.nullSpeaker = constants.null_spk
         self.nullStyle = constants.null_style
 
-        // Precompute null text context for CFG: ids = [bos, eos] = [1, 2], mask = [true, true]
-        if config.cfgScale > 0 {
+        // Precompute null text context for CFG (v3 Nano): ids = [bos, eos] = [1, 2], mask = [true, true]
+        if config.mode == .v3nano && config.cfgScale > 0 {
             if let (ctx, mask) = try? await engine.runTextEncoder(tokenIDs: [1, 2], style: constants.null_style) {
                 self.nullCtx = ctx
                 self.nullMask = mask
@@ -84,12 +86,14 @@ public actor VieNeuTTS {
         self.voiceCloner = VoiceCloner(onnxEngine: self.engine, modelProvider: config.modelProvider)
 
         if config.mode == .v3turbo {
-            if let mock = config.onnxEngineOverride as? (any V3TurboInferenceEngine) {
+            if let overrideTurbo = config.turboEngineOverride {
+                self.turboEngine = overrideTurbo
+            } else if let mock = config.onnxEngineOverride as? (any V3TurboInferenceEngine) {
                 self.turboEngine = mock
             } else if config.modelProvider is MockModelProvider {
                 self.turboEngine = MockV3TurboEngine()
             } else {
-                self.turboEngine = try? V3TurboEngine(modelProvider: config.modelProvider)
+                self.turboEngine = try V3TurboEngine(modelProvider: config.modelProvider)
             }
         } else {
             self.turboEngine = nil
@@ -111,13 +115,13 @@ public actor VieNeuTTS {
             return cached
         }
 
-        presetVoiceStore.loadIfNeeded(from: config.modelProvider)
+        presetVoiceStore.loadIfNeeded(from: config.modelProvider, mode: config.mode)
         if let loaded = presetVoiceStore.get(name: name) {
             return loaded
         }
 
         // Fallback for mock test environments
-        if name == "Minh Quân" || name == "MockVoice" || name.contains("Mock") {
+        if name == "Minh Quân" || name == "Nguyễn Ngọc Ngạn" || name == "MockVoice" || name.contains("Mock") {
             let mock = VoiceProfile.mock(name: name)
             presetVoiceStore.set(name: name, profile: mock)
             return mock
@@ -328,10 +332,38 @@ public actor VieNeuTTS {
 private struct PresetVoiceFile: Decodable {
     struct PresetEntry: Decodable {
         let speaker_emb: [Float]
-        let style: [[Float]]?
+        let styleTokens: [[Float]]
+        let styleName: String?
         let codes: [[Int64]]?
         let description: String?
         let gender: String?
+
+        enum CodingKeys: String, CodingKey {
+            case speaker_emb
+            case style
+            case codes
+            case description
+            case gender
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            self.speaker_emb = try container.decode([Float].self, forKey: .speaker_emb)
+            self.codes = try container.decodeIfPresent([[Int64]].self, forKey: .codes)
+            self.description = try container.decodeIfPresent(String.self, forKey: .description)
+            self.gender = try container.decodeIfPresent(String.self, forKey: .gender)
+
+            if let tokens = try? container.decode([[Float]].self, forKey: .style) {
+                self.styleTokens = tokens
+                self.styleName = nil
+            } else if let name = try? container.decode(String.self, forKey: .style) {
+                self.styleTokens = []
+                self.styleName = name
+            } else {
+                self.styleTokens = []
+                self.styleName = nil
+            }
+        }
     }
     let default_voice: String?
     let presets: [String: PresetEntry]?
@@ -354,13 +386,16 @@ private final class PresetVoiceStore: @unchecked Sendable {
         voices[name] = profile
     }
 
-    func loadIfNeeded(from modelProvider: any ModelProvider) {
+    func loadIfNeeded(from modelProvider: any ModelProvider, mode: VieNeuModelMode = .v3nano) {
         lock.lock()
         defer { lock.unlock() }
         guard !hasAttemptedLoad else { return }
         hasAttemptedLoad = true
 
-        let candidates = ["voices_v3_turbo.json", "voices_v3_nano.json", "voices.json"]
+        let candidates = (mode == .v3turbo)
+            ? ["voices_v3_turbo.json", "voices_v3_nano.json", "voices.json"]
+            : ["voices_v3_nano.json", "voices_v3_turbo.json", "voices.json"]
+
         for filename in candidates {
             let data: Data?
             if let url = try? modelProvider.modelURL(for: filename),
@@ -382,7 +417,7 @@ private final class PresetVoiceStore: @unchecked Sendable {
                 let profile = VoiceProfile(
                     name: pName,
                     speakerEmbedding: entry.speaker_emb,
-                    styleTokens: entry.style ?? [],
+                    styleTokens: entry.styleTokens,
                     refCodes: entry.codes
                 )
                 voices[pName] = profile

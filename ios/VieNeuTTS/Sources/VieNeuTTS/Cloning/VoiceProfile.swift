@@ -63,7 +63,8 @@ public struct VoiceProfile: Codable, Sendable, Equatable {
         VoiceProfile(
             name: name,
             speakerEmbedding: Array(repeating: Float(0.1), count: 192),
-            styleTokens: Array(repeating: Array(repeating: Float(0.2), count: 256), count: 50)
+            styleTokens: Array(repeating: Array(repeating: Float(0.2), count: 256), count: 50),
+            refCodes: Array(repeating: Array(repeating: Int64(42), count: 16), count: 10)
         )
     }
 }

@@ -58,6 +58,9 @@ public struct VieNeuConfig: Sendable {
     /// Optional neural engine override, useful for injecting `MockONNXEngine` in unit tests.
     public var onnxEngineOverride: (any ONNXInferenceEngine)?
 
+    /// Optional v3 Turbo engine override.
+    public var turboEngineOverride: (any V3TurboInferenceEngine)?
+
     /// Creates a new configuration instance.
     public init(
         mode: VieNeuModelMode = .v3nano,
@@ -72,7 +75,8 @@ public struct VieNeuConfig: Sendable {
         topP: Float = 0.95,
         repetitionPenalty: Float = 1.2,
         maxNewFrames: Int = 300,
-        onnxEngineOverride: (any ONNXInferenceEngine)? = nil
+        onnxEngineOverride: (any ONNXInferenceEngine)? = nil,
+        turboEngineOverride: (any V3TurboInferenceEngine)? = nil
     ) {
         self.mode = mode
         self.modelProvider = modelProvider
@@ -87,6 +91,7 @@ public struct VieNeuConfig: Sendable {
         self.repetitionPenalty = repetitionPenalty
         self.maxNewFrames = maxNewFrames
         self.onnxEngineOverride = onnxEngineOverride
+        self.turboEngineOverride = turboEngineOverride
     }
 
     /// Convenience factory creating a mock configuration with `MockModelProvider` and `MockONNXEngine`.

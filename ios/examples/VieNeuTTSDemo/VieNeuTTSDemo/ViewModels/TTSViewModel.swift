@@ -175,40 +175,12 @@ public final class TTSViewModel: ObservableObject {
             let ttsInstance = try await VieNeuTTS(config: config)
             self.tts = ttsInstance
 
-            // Load preset voices
-            var voices: [VoiceProfile] = []
-            let presetNames = [
-                "Minh Quân",
-                "Nguyễn Ngọc Ngạn",
-                "Mai Anh",
-                "Mạnh Dũng",
-                "Đức Trí",
-                "Hữu Quân",
-                "Anh Khôi",
-                "Trúc Ly",
-                "Mỹ Duyên",
-                "Xuân Tiên",
-                "Adam",
-                "Ái Hân"
-            ]
-            for name in presetNames {
-                if let v = try? ttsInstance.loadPresetVoice(name: name) {
-                    voices.append(v)
-                }
-            }
-            if voices.isEmpty {
-                voices.append(VoiceProfile.mock(name: "Minh Quân"))
-            }
+            // Load preset and custom voices for the active mode
+            await reloadVoices(tts: ttsInstance)
 
-            // Load enrolled custom voices from disk
-            let customVoices = loadCustomVoicesFromDisk()
-            voices.append(contentsOf: customVoices)
-
-            self.availableVoices = voices
-            self.selectedVoice = voices.first!
             self.isReady = true
             self.isDownloading = false
-            self.statusMessage = "Mô hình v3 Nano đã sẵn sàng!"
+            self.statusMessage = "Mô hình \(selectedMode == .v3turbo ? "v3 Turbo (48 kHz)" : "v3 Nano (24 kHz)") đã sẵn sàng!"
         } catch {
             // Fallback to mock configuration in testing or preview environments
             if tts == nil {
@@ -679,6 +651,10 @@ public final class TTSViewModel: ObservableObject {
             )
             let newTTS = try await VieNeuTTS(config: config)
             self.tts = newTTS
+
+            // Reload voices corresponding to new architecture mode
+            await reloadVoices(tts: newTTS)
+
             self.isReady = true
             self.isDownloading = false
             self.statusMessage = "Mô hình \(newMode == .v3turbo ? "v3 Turbo (48 kHz)" : "v3 Nano (24 kHz)") đã sẵn sàng!"
@@ -691,6 +667,61 @@ public final class TTSViewModel: ObservableObject {
 
     // MARK: - Private Helpers
 
+    /// Reloads preset voices and enrolled custom voices for the active engine.
+    private func reloadVoices(tts: VieNeuTTS) async {
+        var voices: [VoiceProfile] = []
+        let presetNames: [String]
+        if selectedMode == .v3turbo {
+            presetNames = [
+                "Nguyễn Ngọc Ngạn",
+                "Mai Anh",
+                "Trúc Ly",
+                "Bảo Châu",
+                "Quỳnh Anh",
+                "Minh Quang",
+                "Hà Phương",
+                "Ngọc Huyền",
+                "Quốc Tuấn",
+                "Hải Đăng",
+                "Thanh Tùng",
+                "Thiện Minh"
+            ]
+        } else {
+            presetNames = [
+                "Minh Quân",
+                "Mai Anh",
+                "Mạnh Dũng",
+                "Đức Trí",
+                "Hữu Quân",
+                "Anh Khôi",
+                "Trúc Ly",
+                "Mỹ Duyên",
+                "Xuân Tiên",
+                "Adam",
+                "Ái Hân"
+            ]
+        }
+
+        for name in presetNames {
+            if let v = try? tts.loadPresetVoice(name: name) {
+                voices.append(v)
+            }
+        }
+        if voices.isEmpty {
+            voices.append(VoiceProfile.mock(name: selectedMode == .v3turbo ? "Nguyễn Ngọc Ngạn" : "Minh Quân"))
+        }
+
+        let customVoices = loadCustomVoicesFromDisk()
+        voices.append(contentsOf: customVoices)
+
+        self.availableVoices = voices
+        if let match = voices.first(where: { $0.name == self.selectedVoice.name }) {
+            self.selectedVoice = match
+        } else if let first = voices.first {
+            self.selectedVoice = first
+        }
+    }
+
     /// Reuses existing ONNX sessions while updating synthesis parameters like eulerSteps and speed.
     private func prepareTTSInstance(reusing existing: VieNeuTTS) async throws -> VieNeuTTS {
         if existing.config.mode == selectedMode && existing.config.eulerSteps == eulerSteps && abs(existing.config.speed - speed) < 1e-4 {
@@ -698,12 +729,14 @@ public final class TTSViewModel: ObservableObject {
         }
 
         let engine = await existing.engine
+        let turbo = await existing.turboEngine
         let newConfig = VieNeuConfig(
             mode: selectedMode,
             modelProvider: existing.config.modelProvider,
             eulerSteps: eulerSteps,
             speed: speed,
-            onnxEngineOverride: engine
+            onnxEngineOverride: engine,
+            turboEngineOverride: turbo
         )
         let updated = try await VieNeuTTS(config: newConfig)
         self.tts = updated

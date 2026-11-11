@@ -29,6 +29,20 @@ final class ChunkerTests: XCTestCase {
         XCTAssertEqual(chunks[0].pauseDuration, 0.2, accuracy: 0.01)
     }
 
+    func testCaDaoChunks() {
+        let text = """
+        Anh em nào phải người xa,
+        Cùng chung bác mẹ, một nhà cùng thân.
+        Yêu nhau như thể tay chân,
+        Anh em hòa thuận, hai thân vui vầy.
+        """
+        let chunks = Chunker.splitToChunks(text, maxChars: 140)
+        print(">>> SWIFT CA DAO CHUNKS COUNT:", chunks.count)
+        for (i, c) in chunks.enumerated() {
+            print("  Chunk \(i): [\(c.text)] pause=\(c.pauseDuration)")
+        }
+    }
+
     func testParagraphBreaksProduceParagraphPauses() {
         let text = "Đoạn văn thứ nhất.\n\nĐoạn văn thứ hai."
         let chunks = Chunker.splitToChunks(text, maxChars: 100)

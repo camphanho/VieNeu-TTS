@@ -144,6 +144,15 @@ public final class TTSViewModel: ObservableObject {
             if fromBundle && Bundle.main.url(forResource: "config", withExtension: "json") != nil {
                 provider = BundleModelProvider(bundle: .main)
                 downloadProgress = 1.0
+            } else if selectedMode == .v3turbo {
+                let downloader = ModelDownloader()
+                provider = try await downloader.downloadTurbo { [weak self] progress in
+                    Task { @MainActor [weak self] in
+                        guard let self = self else { return }
+                        self.downloadProgress = progress
+                        self.statusMessage = "Đang tải mô hình v3 Turbo (48 kHz): \(Int(progress * 100))%"
+                    }
+                }
             } else {
                 let downloader = ModelDownloader()
                 provider = try await downloader.download { [weak self] progress in
@@ -635,9 +644,48 @@ public final class TTSViewModel: ObservableObject {
         guard newMode != selectedMode else { return }
         selectedMode = newMode
         stopPlayback()
-        if let currentTTS = tts {
-            _ = try? await prepareTTSInstance(reusing: currentTTS)
-            statusMessage = "Đã chuyển sang \(newMode == .v3turbo ? "v3 Turbo (48 kHz)" : "v3 Nano (24 kHz)")"
+        isReady = false
+        isDownloading = true
+        downloadProgress = 0.0
+        statusMessage = "Đang chuẩn bị mô hình \(newMode == .v3turbo ? "v3 Turbo (48 kHz, Studio)" : "v3 Nano (24 kHz)")..."
+
+        do {
+            let downloader = ModelDownloader()
+            let provider: any ModelProvider
+            if newMode == .v3turbo {
+                provider = try await downloader.downloadTurbo { [weak self] progress in
+                    Task { @MainActor [weak self] in
+                        guard let self = self else { return }
+                        self.downloadProgress = progress
+                        self.statusMessage = "Đang tải v3 Turbo (48 kHz): \(Int(progress * 100))%"
+                    }
+                }
+            } else {
+                provider = try await downloader.download { [weak self] progress in
+                    Task { @MainActor [weak self] in
+                        guard let self = self else { return }
+                        self.downloadProgress = progress
+                        self.statusMessage = "Đang tải v3 Nano (24 kHz): \(Int(progress * 100))%"
+                    }
+                }
+            }
+
+            self.modelProvider = provider
+            let config = VieNeuConfig(
+                mode: newMode,
+                modelProvider: provider,
+                eulerSteps: eulerSteps,
+                speed: speed
+            )
+            let newTTS = try await VieNeuTTS(config: config)
+            self.tts = newTTS
+            self.isReady = true
+            self.isDownloading = false
+            self.statusMessage = "Mô hình \(newMode == .v3turbo ? "v3 Turbo (48 kHz)" : "v3 Nano (24 kHz)") đã sẵn sàng!"
+        } catch {
+            self.isDownloading = false
+            self.errorMessage = "Không thể chuyển mô hình: \(error.localizedDescription)"
+            self.statusMessage = "Lỗi nạp mô hình."
         }
     }
 

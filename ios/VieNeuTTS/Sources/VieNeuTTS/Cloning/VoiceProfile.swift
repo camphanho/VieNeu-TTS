@@ -8,22 +8,28 @@ public struct VoiceProfile: Codable, Sendable, Equatable {
     /// 192-dimensional x-vector speaker embedding representing acoustic vocal tract characteristics.
     public let speakerEmbedding: [Float]
 
-    /// 50 x 256 matrix of reference style tokens representing prosody, cadence, and delivery.
+    /// 50 x 256 matrix of reference style tokens representing prosody, cadence, and delivery (v3 Nano).
     public let styleTokens: [[Float]]
+
+    /// Reference acoustic codes (T x 16 codebooks) for v3 Turbo in-context conditioning.
+    public let refCodes: [[Int64]]?
 
     /// Initializes a new voice profile.
     /// - Parameters:
     ///   - name: Voice profile identifier.
     ///   - speakerEmbedding: 192-dimensional speaker embedding vector.
-    ///   - styleTokens: 50 x 256 style token representations.
+    ///   - styleTokens: 50 x 256 style token representations (v3 Nano).
+    ///   - refCodes: Optional acoustic codebook matrix (v3 Turbo).
     public init(
         name: String,
         speakerEmbedding: [Float],
-        styleTokens: [[Float]]
+        styleTokens: [[Float]] = [],
+        refCodes: [[Int64]]? = nil
     ) {
         self.name = name
         self.speakerEmbedding = speakerEmbedding
         self.styleTokens = styleTokens
+        self.refCodes = refCodes
     }
 
     /// Exports the voice profile as formatted JSON to the specified file URL.

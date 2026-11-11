@@ -13,13 +13,13 @@ public final class V3TurboWeights: Sendable {
     public let speakerDim: Int = 192
 
     // Flat memory buffers
-    private let textEmb: [Float]
-    private let audioEmb: [Float]
-    private let xvecW: [Float]
-    private let xvecB: [Float]
-    private let xvecLnW: [Float]
-    private let xvecLnB: [Float]
-    private let xvecLnEps: Float
+    public let textEmb: [Float]
+    public let audioEmb: [Float]
+    public let xvecW: [Float]
+    public let xvecB: [Float]
+    public let xvecLnW: [Float]
+    public let xvecLnB: [Float]
+    public let xvecLnEps: Float
 
     public init(
         textEmb: [Float],
@@ -60,6 +60,82 @@ public final class V3TurboWeights: Sendable {
         return Array(audioEmb[start..<end])
     }
 
+    /// Computes acoustic logits for codebook `ch` given hidden representation `vec`:
+    /// `logits = vec @ audio_emb[ch].T` (1024 floats)
+    public func audioLogits(codebook ch: Int, vector vec: [Float]) -> [Float] {
+        guard ch >= 0 && ch < numCodebooks, vec.count == hiddenSize else {
+            return [Float](repeating: 0.0, count: audioVocabSize)
+        }
+        var logits = [Float](repeating: 0.0, count: audioVocabSize)
+        let chOffset = ch * audioVocabSize * hiddenSize
+
+        #if canImport(Accelerate)
+        audioEmb.withUnsafeBufferPointer { aPtr in
+            vec.withUnsafeBufferPointer { vPtr in
+                logits.withUnsafeMutableBufferPointer { lPtr in
+                    let matrixA = aPtr.baseAddress!.advanced(by: chOffset)
+                    vDSP_mmul(
+                        matrixA, 1,
+                        vPtr.baseAddress!, 1,
+                        lPtr.baseAddress!, 1,
+                        vDSP_Length(audioVocabSize),
+                        1,
+                        vDSP_Length(hiddenSize)
+                    )
+                }
+            }
+        }
+        #else
+        for i in 0..<audioVocabSize {
+            var sum: Float = 0.0
+            let rowOffset = chOffset + i * hiddenSize
+            for j in 0..<hiddenSize {
+                sum += audioEmb[rowOffset + j] * vec[j]
+            }
+            logits[i] = sum
+        }
+        #endif
+
+        return logits
+    }
+
+    /// Computes text logits for speech generation end (EOS) check:
+    /// `text_logits = slot0 @ text_emb.T` (419 floats)
+    public func textLogits(vector slot0: [Float]) -> [Float] {
+        guard slot0.count == hiddenSize else {
+            return [Float](repeating: 0.0, count: textVocabSize)
+        }
+        var logits = [Float](repeating: 0.0, count: textVocabSize)
+
+        #if canImport(Accelerate)
+        textEmb.withUnsafeBufferPointer { tPtr in
+            slot0.withUnsafeBufferPointer { sPtr in
+                logits.withUnsafeMutableBufferPointer { lPtr in
+                    vDSP_mmul(
+                        tPtr.baseAddress!, 1,
+                        sPtr.baseAddress!, 1,
+                        lPtr.baseAddress!, 1,
+                        vDSP_Length(textVocabSize),
+                        1,
+                        vDSP_Length(hiddenSize)
+                    )
+                }
+            }
+        }
+        #else
+        for i in 0..<textVocabSize {
+            var sum: Float = 0.0
+            let rowOffset = i * hiddenSize
+            for j in 0..<hiddenSize {
+                sum += textEmb[rowOffset + j] * slot0[j]
+            }
+            logits[i] = sum
+        }
+        #endif
+
+        return logits
+    }
+
     /// Computes the 768-dimensional global speaker anchor from a 192-dimensional x-vector.
     public func speakerAnchor(for speakerEmb: [Float]) throws -> [Float] {
         guard speakerEmb.count == speakerDim, !speakerEmb.allSatisfy({ $0 == 0 }) else {
@@ -70,7 +146,6 @@ public final class V3TurboWeights: Sendable {
 
         #if canImport(Accelerate)
         // Matrix-vector multiplication: v = xvecW * speakerEmb + xvecB
-        // xvecW has shape (768, 192), speakerEmb has shape (192, 1) -> v has shape (768, 1)
         vDSP_mmul(
             xvecW, 1,
             speakerEmb, 1,
@@ -86,7 +161,6 @@ public final class V3TurboWeights: Sendable {
         var mean: Float = 0.0
         var stdDev: Float = 0.0
         vDSP_normalize(v, 1, &v, 1, &mean, &stdDev, vDSP_Length(hiddenSize))
-        // vDSP_normalize divides by population standard deviation
         vDSP_vmul(v, 1, xvecLnW, 1, &v, 1, vDSP_Length(hiddenSize))
         vDSP_vadd(v, 1, xvecLnB, 1, &v, 1, vDSP_Length(hiddenSize))
         #else
@@ -143,6 +217,93 @@ public final class V3TurboWeights: Sendable {
         }
 
         return result
+    }
+
+    /// Parses uncompressed NumPy arrays directly from `vieneu_v3_heads.npz` (ZIP format).
+    public static func parseNPZ(data: Data) -> V3TurboWeights? {
+        guard data.count > 1000 else { return nil }
+
+        var arrays: [String: [Float]] = [:]
+        let bytes = [UInt8](data)
+        let total = bytes.count
+
+        var pos = 0
+        while pos + 46 <= total {
+            if bytes[pos] == 0x50 && bytes[pos + 1] == 0x4b && bytes[pos + 2] == 0x01 && bytes[pos + 3] == 0x02 {
+                let compSize = Int(readUInt32(bytes: bytes, offset: pos + 20))
+                let fnLen = Int(readUInt16(bytes: bytes, offset: pos + 28))
+                let extraLen = Int(readUInt16(bytes: bytes, offset: pos + 30))
+                let commentLen = Int(readUInt16(bytes: bytes, offset: pos + 32))
+                let localHdrOffset = Int(readUInt32(bytes: bytes, offset: pos + 42))
+
+                if pos + 46 + fnLen <= total {
+                    let nameBytes = Array(bytes[(pos + 46)..<(pos + 46 + fnLen)])
+                    let name = String(decoding: nameBytes, as: UTF8.self).replacingOccurrences(of: ".npy", with: "")
+
+                    if localHdrOffset + 30 <= total {
+                        let locFnLen = Int(readUInt16(bytes: bytes, offset: localHdrOffset + 26))
+                        let locExtraLen = Int(readUInt16(bytes: bytes, offset: localHdrOffset + 28))
+                        let dataStart = localHdrOffset + 30 + locFnLen + locExtraLen
+
+                        if dataStart + compSize <= total && compSize >= 16 {
+                            // \x93NUMPY header check
+                            if bytes[dataStart] == 0x93 && bytes[dataStart + 1] == 0x4e && bytes[dataStart + 2] == 0x55 &&
+                               bytes[dataStart + 3] == 0x4d && bytes[dataStart + 4] == 0x50 && bytes[dataStart + 5] == 0x59 {
+                                let hdrLen = Int(readUInt16(bytes: bytes, offset: dataStart + 8))
+                                let floatStart = dataStart + 10 + hdrLen
+                                let floatBytesCount = compSize - (10 + hdrLen)
+                                if floatBytesCount > 0 && floatStart + floatBytesCount <= total {
+                                    let floatCount = floatBytesCount / 4
+                                    var floats = [Float](repeating: 0.0, count: floatCount)
+                                    data.withUnsafeBytes { rawPtr in
+                                        let src = rawPtr.baseAddress!.advanced(by: floatStart)
+                                        floats.withUnsafeMutableBytes { dst in
+                                            dst.baseAddress!.copyMemory(from: src, byteCount: floatCount * 4)
+                                        }
+                                    }
+                                    arrays[name] = floats
+                                }
+                            }
+                        }
+                    }
+                }
+                pos += 46 + fnLen + extraLen + commentLen
+            } else {
+                pos += 1
+            }
+        }
+
+        guard let textEmb = arrays["text_emb"], textEmb.count == 419 * 768,
+              let audioEmb = arrays["audio_emb"], audioEmb.count == 16 * 1024 * 768,
+              let xvecW = arrays["xvec_w"], xvecW.count == 768 * 192,
+              let xvecB = arrays["xvec_b"], xvecB.count == 768,
+              let xvecLnW = arrays["xvec_ln_w"], xvecLnW.count == 768,
+              let xvecLnB = arrays["xvec_ln_b"], xvecLnB.count == 768 else {
+            return nil
+        }
+
+        let eps = arrays["xvec_ln_eps"]?.first ?? 1e-5
+
+        return V3TurboWeights(
+            textEmb: textEmb,
+            audioEmb: audioEmb,
+            xvecW: xvecW,
+            xvecB: xvecB,
+            xvecLnW: xvecLnW,
+            xvecLnB: xvecLnB,
+            xvecLnEps: eps
+        )
+    }
+
+    private static func readUInt16(bytes: [UInt8], offset: Int) -> UInt16 {
+        UInt16(bytes[offset]) | (UInt16(bytes[offset + 1]) << 8)
+    }
+
+    private static func readUInt32(bytes: [UInt8], offset: Int) -> UInt32 {
+        UInt32(bytes[offset]) |
+        (UInt32(bytes[offset + 1]) << 8) |
+        (UInt32(bytes[offset + 2]) << 16) |
+        (UInt32(bytes[offset + 3]) << 24)
     }
 
     /// Creates a mock weights container for deterministic testing.

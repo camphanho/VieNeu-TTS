@@ -73,7 +73,7 @@ public actor MockV3TurboEngine: V3TurboInferenceEngine {
     }
 }
 
-/// Concrete on-device inference engine executing VieNeu-TTS v3 Turbo with ONNX Runtime.
+/// Concrete on-device inference engine executing VieNeu-TTS v3 Turbo (48 kHz) with ONNX Runtime.
 public actor V3TurboEngine: V3TurboInferenceEngine {
     public let sampleRate: Int = 48000
     public let samplesPerFrame: Int = 960
@@ -82,6 +82,7 @@ public actor V3TurboEngine: V3TurboInferenceEngine {
 
     private let modelProvider: any ModelProvider
     private let weights: V3TurboWeights
+    private let tokenizer: V3TurboTokenizer?
     private let intraOpThreads: Int
 
     #if canImport(OnnxRuntimeBindings) || canImport(onnxruntime)
@@ -95,13 +96,35 @@ public actor V3TurboEngine: V3TurboInferenceEngine {
 
     public init(
         modelProvider: any ModelProvider,
-        weights: V3TurboWeights = V3TurboWeights.mock(),
+        weights: V3TurboWeights? = nil,
+        tokenizer: V3TurboTokenizer? = nil,
         intraOpThreads: Int = 0
     ) throws {
         self.modelProvider = modelProvider
-        self.weights = weights
         self.intraOpThreads = intraOpThreads
 
+        // 1. Resolve weights
+        if let suppliedWeights = weights {
+            self.weights = suppliedWeights
+        } else if let headsURL = try? modelProvider.modelURL(for: "vieneu_v3_heads.npz"),
+                  let data = try? Data(contentsOf: headsURL),
+                  let loaded = V3TurboWeights.parseNPZ(data: data) {
+            self.weights = loaded
+        } else {
+            self.weights = V3TurboWeights.mock()
+        }
+
+        // 2. Resolve tokenizer
+        if let suppliedTokenizer = tokenizer {
+            self.tokenizer = suppliedTokenizer
+        } else if let tokURL = try? modelProvider.modelURL(for: "tokenizer.json"),
+                  let loaded = try? V3TurboTokenizer.load(from: tokURL) {
+            self.tokenizer = loaded
+        } else {
+            self.tokenizer = nil
+        }
+
+        // 3. Initialize ONNX runtime sessions
         #if canImport(OnnxRuntimeBindings) || canImport(onnxruntime)
         let ortEnv = try ORTEnv(loggingLevel: .warning)
         self.env = ortEnv
@@ -142,7 +165,7 @@ public actor V3TurboEngine: V3TurboInferenceEngine {
         #if canImport(OnnxRuntimeBindings) || canImport(onnxruntime)
         guard let prefillSess = prefillSession,
               let decodeSess = decodeSession,
-              let _ = acousticSession,
+              let acousticSess = acousticSession,
               let codecDecSess = codecDecoderSession else {
             // Fallback for tests when sessions aren't loaded on disk
             let count = max(2, min(maxNewFrames, 10))
@@ -151,24 +174,40 @@ public actor V3TurboEngine: V3TurboInferenceEngine {
 
         let anchor = try weights.speakerAnchor(for: speakerEmbedding)
 
-        // Build prompt rows: [style_id (16), tps (3), tokens..., tpe (4)]
+        // 1. Build prompt rows
         let styleID: Int64 = 16
         let tps: Int64 = 3
         let tpe: Int64 = 4
-        let dummyTokens: [Int64] = [10, 20, 30] // resolved via tokenizer
-        let textIDs: [Int64] = [styleID, tps] + dummyTokens + [tpe]
+        let sgs: Int64 = 5
+        let eosSpeech: Int = 6
+        let audioPad: Int64 = 1024
+        let refSlot: Int64 = 7
+
+        let phoneIDs = tokenizer?.encode(phonemes: phonemes) ?? [10, 20, 30]
+        let textIDs: [Int64] = [styleID, tps] + phoneIDs + [tpe]
 
         var rows = [[Int64]]()
         for tID in textIDs {
-            var row = [Int64](repeating: 1024, count: numCodebooks + 1)
+            var row = [Int64](repeating: audioPad, count: numCodebooks + 1)
             row[0] = tID
             rows.append(row)
+        }
+
+        if let ref = refCodes {
+            for refRow in ref {
+                var row = [Int64](repeating: audioPad, count: numCodebooks + 1)
+                row[0] = refSlot
+                for (ch, val) in refRow.prefix(numCodebooks).enumerated() {
+                    row[ch + 1] = val
+                }
+                rows.append(row)
+            }
         }
 
         let promptEmbeds = weights.embedRows(rows: rows, anchor: anchor)
         let tPrompt = promptEmbeds.count
 
-        // 1. Prefill
+        // 2. Prefill
         let promptTensor = try ORTTensorHelper.createTensor(from: promptEmbeds, shape: [1, NSNumber(value: tPrompt), 768])
         let prefillOutputs = try prefillSess.run(
             withInputs: ["inputs_embeds": promptTensor],
@@ -176,73 +215,164 @@ public actor V3TurboEngine: V3TurboInferenceEngine {
             runOptions: nil
         )
 
-        var pastK = [ORTValue]()
-        var pastV = [ORTValue]()
+        var pastK: [String: ORTValue] = [:]
+        var pastV: [String: ORTValue] = [:]
         for i in 0..<numLayers {
             if let k = prefillOutputs["present_k_\(i)"], let v = prefillOutputs["present_v_\(i)"] {
-                pastK.append(k)
-                pastV.append(v)
+                pastK["past_k_\(i)"] = k
+                pastV["past_v_\(i)"] = v
             }
         }
+
+        guard let hiddenPrefill = prefillOutputs["hidden"] else {
+            throw VieNeuError.synthesisFailed("Prefill produced no hidden state.")
+        }
+        let hFlat = try ORTTensorHelper.extractFloatArray(from: hiddenPrefill)
+        var h = Array(hFlat[(hFlat.count - 768)..<hFlat.count])
 
         var emittedCodes = [[Int32]]()
         let repetitionTracker = RepetitionHistory(window: 64)
 
-        // 2. Decode Loop
+        // 3. Autoregressive Loop
         for t in 0..<maxNewFrames {
             try Task.checkCancellation()
 
-            // Run acoustic step
-            var frameCodes = [Int32]()
-            for _ in 0..<numCodebooks {
-                let logits = [Float](repeating: 0.0, count: 1024)
-                let sampleToken = V3TurboSampler.sample(
-                    logits: logits,
+            // Run acoustic frame
+            let cond = h
+            let txt = weights.textEmbedding(for: Int(sgs))
+            let tok = [cond, txt]
+            let tokTensor = try ORTTensorHelper.createTensor(from: tok, shape: [1, 2, 768])
+            let posTensor0 = try ORTTensorHelper.createTensor(from: [Int64(0), Int64(1)], shape: [1, 2])
+            let emptyPastK = try ORTTensorHelper.createTensor(from: [Float](), shape: [1, 8, 0, 96])
+            let emptyPastV = try ORTTensorHelper.createTensor(from: [Float](), shape: [1, 8, 0, 96])
+
+            var acInputs: [String: ORTValue] = [
+                "token_emb": tokTensor,
+                "position_ids": posTensor0,
+                "past_k_0": emptyPastK,
+                "past_v_0": emptyPastV
+            ]
+            let acOutputs0 = try acousticSess.run(
+                withInputs: acInputs,
+                outputNames: Set(try acousticSess.outputNames()),
+                runOptions: nil
+            )
+            var pk = acOutputs0["present_k_0"]!
+            var pv = acOutputs0["present_v_0"]!
+
+            let acHiddenFlat0 = try ORTTensorHelper.extractFloatArray(from: acOutputs0["hidden"]!)
+            let slot0 = Array(acHiddenFlat0[0..<768])
+            let hidden1 = Array(acHiddenFlat0[768..<1536])
+
+            let logits0 = weights.audioLogits(codebook: 0, vector: hidden1)
+            let code0 = V3TurboSampler.sample(
+                logits: logits0,
+                temperature: temperature,
+                topK: topK,
+                topP: topP,
+                repetitionPenalty: 1.2,
+                history: repetitionTracker.seenTokens()
+            )
+            repetitionTracker.add(code0)
+            var codes = [Int32(code0)]
+
+            for ch in 1..<numCodebooks {
+                let prevCode = Int(codes.last!)
+                let emb = weights.audioEmbedding(codebook: ch - 1, tokenID: prevCode)
+                let embTensor = try ORTTensorHelper.createTensor(from: emb, shape: [1, 1, 768])
+                let posTensorCh = try ORTTensorHelper.createTensor(from: [Int64(ch + 1)], shape: [1, 1])
+
+                let stepAcInputs: [String: ORTValue] = [
+                    "token_emb": embTensor,
+                    "position_ids": posTensorCh,
+                    "past_k_0": pk,
+                    "past_v_0": pv
+                ]
+                let stepAcOut = try acousticSess.run(
+                    withInputs: stepAcInputs,
+                    outputNames: Set(try acousticSess.outputNames()),
+                    runOptions: nil
+                )
+                pk = stepAcOut["present_k_0"]!
+                pv = stepAcOut["present_v_0"]!
+                let stepHFlat = try ORTTensorHelper.extractFloatArray(from: stepAcOut["hidden"]!)
+                let stepH = Array(stepHFlat[0..<768])
+                let logitsCh = weights.audioLogits(codebook: ch, vector: stepH)
+                let codeCh = V3TurboSampler.sample(
+                    logits: logitsCh,
                     temperature: temperature,
                     topK: topK,
                     topP: topP,
                     repetitionPenalty: 1.2,
                     history: repetitionTracker.seenTokens()
                 )
-                repetitionTracker.add(sampleToken)
-                frameCodes.append(Int32(sampleToken))
+                repetitionTracker.add(codeCh)
+                codes.append(Int32(codeCh))
             }
-            emittedCodes.append(frameCodes)
 
-            // Step decode
-            let stepInput = try ORTTensorHelper.createTensor(from: [Float](repeating: 0.0, count: 768), shape: [1, 1, 768])
-            let posTensor = try ORTTensorHelper.createTensor(from: [Int64(tPrompt + t)], shape: [1, 1])
+            emittedCodes.append(codes)
 
-            var decodeInputs: [String: ORTValue] = [
-                "inputs_embeds": stepInput,
-                "position_ids": posTensor
+            // Check EOS
+            let textLogits = weights.textLogits(vector: slot0)
+            var bestIdx = 0
+            var bestVal = textLogits[0]
+            for i in 1..<textLogits.count {
+                if textLogits[i] > bestVal {
+                    bestVal = textLogits[i]
+                    bestIdx = i
+                }
+            }
+            if bestIdx == eosSpeech {
+                break
+            }
+
+            // Step decode for the backbone
+            var nextSlot = [Int64](repeating: audioPad, count: numCodebooks + 1)
+            nextSlot[0] = sgs
+            for ch in 0..<numCodebooks {
+                nextSlot[ch + 1] = Int64(codes[ch])
+            }
+            let se = weights.embedRows(rows: [nextSlot], anchor: anchor)
+            let seTensor = try ORTTensorHelper.createTensor(from: se, shape: [1, 1, 768])
+            let posTensorDec = try ORTTensorHelper.createTensor(from: [Int64(tPrompt + t)], shape: [1, 1])
+
+            var decInputs: [String: ORTValue] = [
+                "inputs_embeds": seTensor,
+                "position_ids": posTensorDec
             ]
-            for i in 0..<pastK.count {
-                decodeInputs["past_k_\(i)"] = pastK[i]
-                decodeInputs["past_v_\(i)"] = pastV[i]
-            }
+            for (k, v) in pastK { decInputs[k] = v }
+            for (k, v) in pastV { decInputs[k] = v }
 
-            let decodeOutputs = try decodeSess.run(
-                withInputs: decodeInputs,
+            let decOutputs = try decodeSess.run(
+                withInputs: decInputs,
                 outputNames: Set(try decodeSess.outputNames()),
                 runOptions: nil
             )
+            let decHFlat = try ORTTensorHelper.extractFloatArray(from: decOutputs["hidden"]!)
+            h = Array(decHFlat[0..<768])
 
-            for i in 0..<pastK.count {
-                if let k = decodeOutputs["present_k_\(i)"], let v = decodeOutputs["present_v_\(i)"] {
-                    pastK[i] = k
-                    pastV[i] = v
+            for i in 0..<numLayers {
+                if let k = decOutputs["present_k_\(i)"], let v = decOutputs["present_v_\(i)"] {
+                    pastK["past_k_\(i)"] = k
+                    pastV["past_v_\(i)"] = v
                 }
             }
         }
 
-        // 3. Codec Decoding
+        // 4. Codec Decoding
         let totalFrames = emittedCodes.count
+        guard totalFrames > 0 else {
+            return []
+        }
+
         let flatCodes = emittedCodes.flatMap { $0 }
         var mutableCodes = flatCodes
         let codesData = NSMutableData(bytes: &mutableCodes, length: flatCodes.count * MemoryLayout<Int32>.size)
         let codesTensor = try ORTValue(tensorData: codesData, elementType: .int32, shape: [1, NSNumber(value: totalFrames), 16])
-        let lenTensor = try ORTTensorHelper.createTensor(from: [Float(totalFrames)], shape: [1]) // length
+
+        var mutableLen: [Int32] = [Int32(totalFrames)]
+        let lenData = NSMutableData(bytes: &mutableLen, length: MemoryLayout<Int32>.size)
+        let lenTensor = try ORTValue(tensorData: lenData, elementType: .int32, shape: [1])
 
         let codecOutputs = try codecDecSess.run(
             withInputs: ["audio_codes": codesTensor, "audio_code_lengths": lenTensor],

@@ -44,4 +44,25 @@ final class V3TurboWeightsTests: XCTestCase {
         XCTAssertEqual(embeds.count, 2)
         XCTAssertEqual(embeds[0].count, 768)
     }
+
+    func testAudioAndTextLogitsComputation() {
+        let weights = V3TurboWeights.mock()
+        let vec = [Float](repeating: 0.1, count: 768)
+        let aLogits = weights.audioLogits(codebook: 0, vector: vec)
+        XCTAssertEqual(aLogits.count, 1024)
+
+        let tLogits = weights.textLogits(vector: vec)
+        XCTAssertEqual(tLogits.count, 419)
+    }
+
+    func testParseNPZFromRealTurboHeadsFile() throws {
+        let headsPath = "/home/camph/.cache/huggingface/hub/models--pnnbao-ump--VieNeu-TTS-v3-Turbo/snapshots/61b85e3d937fbbacb387714180e8182823512523/onnx_int8/vieneu_v3_heads.npz"
+        guard FileManager.default.fileExists(atPath: headsPath) else { return }
+        let data = try Data(contentsOf: URL(fileURLWithPath: headsPath))
+        let weights = V3TurboWeights.parseNPZ(data: data)
+        XCTAssertNotNil(weights)
+        XCTAssertEqual(weights?.textEmb.count, 419 * 768)
+        XCTAssertEqual(weights?.audioEmb.count, 16 * 1024 * 768)
+        XCTAssertEqual(weights?.xvecW.count, 768 * 192)
+    }
 }

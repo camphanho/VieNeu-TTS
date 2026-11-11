@@ -175,4 +175,85 @@ public actor ModelDownloader {
     ) async throws -> CachedModelProvider {
         try await download(to: nil, progress: progress)
     }
+
+    /// Downloads all required v3 Turbo INT8 model assets and MOSS codec to the target cache directory.
+    public func downloadTurbo(
+        to directory: URL? = nil,
+        progress: (@Sendable (Double) -> Void)? = nil
+    ) async throws -> CachedModelProvider {
+        let targetDir: URL
+        if let dir = directory {
+            targetDir = dir
+        } else {
+            let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+                ?? FileManager.default.temporaryDirectory
+            targetDir = base.appendingPathComponent("VieNeuTTS/models/v3turbo_int8")
+        }
+
+        do {
+            try FileManager.default.createDirectory(at: targetDir, withIntermediateDirectories: true)
+        } catch {
+            throw VieNeuError.downloadFailed("Failed to create destination directory: \(error.localizedDescription)")
+        }
+
+        // Map of filename -> remote download URL
+        let turboBase = "https://huggingface.co/\(Self.turboRepo)/resolve/main/onnx_int8"
+        let codecBase = "https://huggingface.co/\(Self.codecRepo)/resolve/main"
+
+        let fileMap: [(String, String)] = [
+            ("config.json", "\(turboBase)/config.json"),
+            ("tokenizer.json", "\(turboBase)/tokenizer.json"),
+            ("vieneu_prefill.onnx", "\(turboBase)/vieneu_prefill.onnx"),
+            ("vieneu_decode_step.onnx", "\(turboBase)/vieneu_decode_step.onnx"),
+            ("vieneu_acoustic_cached.onnx", "\(turboBase)/vieneu_acoustic_cached.onnx"),
+            ("vieneu_backbone_shared.data", "\(turboBase)/vieneu_backbone_shared.data"),
+            ("vieneu_v3_heads.npz", "\(turboBase)/vieneu_v3_heads.npz"),
+            ("moss_audio_tokenizer_decode_full.onnx", "\(codecBase)/moss_audio_tokenizer_decode_full.onnx"),
+            ("moss_audio_tokenizer_decode_shared.data", "\(codecBase)/moss_audio_tokenizer_decode_shared.data")
+        ]
+
+        let totalFiles = fileMap.count
+        var completedFiles = 0
+
+        for (filename, urlString) in fileMap {
+            try Task.checkCancellation()
+            let destinationURL = targetDir.appendingPathComponent(filename)
+
+            var needDownload = true
+            if FileManager.default.fileExists(atPath: destinationURL.path) {
+                let fileSize = (try? FileManager.default.attributesOfItem(atPath: destinationURL.path)[.size] as? UInt64) ?? 0
+                if fileSize > 0 {
+                    needDownload = false
+                }
+            }
+
+            if needDownload {
+                try Task.checkCancellation()
+                guard let remoteURL = URL(string: urlString) else {
+                    throw VieNeuError.downloadFailed("Invalid URL for \(filename)")
+                }
+                do {
+                    let (tempURL, response) = try await session.download(from: remoteURL)
+                    try Task.checkCancellation()
+                    guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
+                        throw VieNeuError.downloadFailed("HTTP error downloading \(filename)")
+                    }
+                    if FileManager.default.fileExists(atPath: destinationURL.path) {
+                        try? FileManager.default.removeItem(at: destinationURL)
+                    }
+                    try FileManager.default.moveItem(at: tempURL, to: destinationURL)
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    if Task.isCancelled { throw CancellationError() }
+                    throw VieNeuError.downloadFailed("Failed downloading \(filename): \(error.localizedDescription)")
+                }
+            }
+
+            completedFiles += 1
+            progress?(Double(completedFiles) / Double(totalFiles))
+        }
+
+        return CachedModelProvider(directory: targetDir)
+    }
 }

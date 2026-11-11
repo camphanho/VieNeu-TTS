@@ -59,4 +59,25 @@ final class V3TurboEngineTests: XCTestCase {
         _ = await task.result
         XCTAssertTrue(task.isCancelled)
     }
+
+    func testRealV3TurboEngineGeneratesAudioWithRealModels() async throws {
+        let dir = URL(fileURLWithPath: "/tmp/test_v3_turbo_models")
+        guard FileManager.default.fileExists(atPath: dir.appendingPathComponent("vieneu_prefill.onnx").path) else {
+            return
+        }
+        let provider = CachedModelProvider(directory: dir)
+        let engine = try V3TurboEngine(modelProvider: provider)
+        let spk = Array(repeating: Float(0.1), count: 192)
+        let samples = try await engine.generate(
+            phonemes: "sˈin tʃˈaː2w",
+            speakerEmbedding: spk,
+            refCodes: nil,
+            temperature: 0.8,
+            topK: 25,
+            topP: 0.95,
+            maxNewFrames: 3
+        )
+        print(">>> REAL TURBO ENGINE GENERATED SAMPLES:", samples.count)
+        XCTAssertGreaterThan(samples.count, 0)
+    }
 }

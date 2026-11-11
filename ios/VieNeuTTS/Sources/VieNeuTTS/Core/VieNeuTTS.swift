@@ -259,7 +259,7 @@ public actor VieNeuTTS {
             let samples = try await turbo.generate(
                 phonemes: finalPhonemes,
                 speakerEmbedding: voice.speakerEmbedding,
-                refCodes: nil,
+                refCodes: voice.refCodes,
                 temperature: config.temperature,
                 topK: config.topK,
                 topP: config.topP,
@@ -328,7 +328,8 @@ public actor VieNeuTTS {
 private struct PresetVoiceFile: Decodable {
     struct PresetEntry: Decodable {
         let speaker_emb: [Float]
-        let style: [[Float]]
+        let style: [[Float]]?
+        let codes: [[Int64]]?
         let description: String?
         let gender: String?
     }
@@ -359,7 +360,7 @@ private final class PresetVoiceStore: @unchecked Sendable {
         guard !hasAttemptedLoad else { return }
         hasAttemptedLoad = true
 
-        let candidates = ["voices_v3_nano.json", "voices.json"]
+        let candidates = ["voices_v3_turbo.json", "voices_v3_nano.json", "voices.json"]
         for filename in candidates {
             let data: Data?
             if let url = try? modelProvider.modelURL(for: filename),
@@ -381,7 +382,8 @@ private final class PresetVoiceStore: @unchecked Sendable {
                 let profile = VoiceProfile(
                     name: pName,
                     speakerEmbedding: entry.speaker_emb,
-                    styleTokens: entry.style
+                    styleTokens: entry.style ?? [],
+                    refCodes: entry.codes
                 )
                 voices[pName] = profile
             }

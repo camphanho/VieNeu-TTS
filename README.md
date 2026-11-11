@@ -30,8 +30,8 @@
 > - **Emotion / non-verbal cues** *(experimental)*: drop `[cười]`, `[thở dài]`, `[hắng giọng]` straight into the text.
 > - **Batched generation** (batch size up to 32), including a multi-speaker **Conversation** mode that batches the whole script regardless of speaker.
 > - **Instant voice cloning** from a 3–8s clip, with automatic reference denoising.
-> - **Real-time streaming + OpenAI-compatible API + Docker** — `POST /v1/audio/speech` drop-in for the OpenAI SDK / Pipecat / LiveKit; first audio in **~115 ms** and **16 concurrent streams under 200 ms** on a single RTX 3060 (32 max), CPU-only streaming too. See [§3](#docker-remote), [§4 Benchmarks](#benchmarks) and [docs/streaming.md](docs/streaming.md).
-> - **LoRA fine-tuning** — train your own voice or reading style on one consumer GPU ([§5](#finetune)).
+> - **Real-time streaming + OpenAI-compatible API + Docker** — `POST /v1/audio/speech` drop-in for the OpenAI SDK / Pipecat / LiveKit; first audio in **~115 ms** and **16 concurrent streams under 200 ms** on a single RTX 3060 (32 max), CPU-only streaming too. See [§4](#docker-remote), [§5 Benchmarks](#benchmarks) and [docs/streaming.md](docs/streaming.md).
+> - **LoRA fine-tuning** — train your own voice or reading style on one consumer GPU ([§6](#finetune)).
 >
 > Try it in the Web UI (backbone **"VieNeu-TTS-v3-Turbo"**) or the SDK (`Vieneu(mode="v3turbo")`, the default).
 
@@ -74,13 +74,14 @@
 
 1. [🦜 Installation & Web UI](#installation)
 2. [📦 Using the Python SDK](#sdk)
-3. [🐳 API Server & Docker](#docker-remote) — OpenAI-compatible streaming API (v3 Turbo) · legacy v2 server
-4. [📊 Benchmarks](#benchmarks) — every speed / latency number in one place (CPU vs GPU, batch, streaming, Nano)
-5. [🎓 Fine-tuning (LoRA)](#finetune)
-6. [🔬 Model Overview](#backbones)
-7. [🚀 Roadmap](#roadmap)
-8. [🤝 Support & Contact](#support)
-9. [📑 Citation](#citation)
+3. [📱 On-Device iOS SDK (Swift)](#ios-sdk) — 100% offline synthesis for iOS & macOS (v3 Turbo 48 kHz & v3 Nano)
+4. [🐳 API Server & Docker](#docker-remote) — OpenAI-compatible streaming API (v3 Turbo) · legacy v2 server
+5. [📊 Benchmarks](#benchmarks) — every speed / latency number in one place (CPU vs GPU, batch, streaming, Nano)
+6. [🎓 Fine-tuning (LoRA)](#finetune)
+7. [🔬 Model Overview](#backbones)
+8. [🚀 Roadmap](#roadmap)
+9. [🤝 Support & Contact](#support)
+10. [📑 Citation](#citation)
 
 ---
 
@@ -88,7 +89,7 @@
 > [!TIP]
 > **On Windows?** The fastest way to get started is the standalone installer at **[vieneu.io/#/download](https://www.vieneu.io/#/download)** — no need to install `uv` or clone the repo manually.
 > **macOS**: a similar installer is coming in an upcoming release; for now, please use the `uv sync` steps below.
-> **Docker?** Skip the steps below: `--profile api-gpu` / `api-cpu` (OpenAI-compatible streaming API) — see [§3 API Server & Docker](#docker-remote).
+> **Docker?** Skip the steps below: `--profile api-gpu` / `api-cpu` (OpenAI-compatible streaming API) — see [§4 API Server & Docker](#docker-remote).
 
 ### Setup with `uv` (Recommended)
 `uv` is the fastest way to manage dependencies. 
@@ -107,7 +108,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
    ```
 
 2. **Install Dependencies:**
-   > 📊 **Which one?** CPU ≈ **RTF 0.5** (2× real-time, one stream) · GPU ≈ **RTF 0.02** batched (~50× real-time) and **16 real-time streams** — all measurements in [§4 Benchmarks](#benchmarks).
+   > 📊 **Which one?** CPU ≈ **RTF 0.5** (2× real-time, one stream) · GPU ≈ **RTF 0.02** batched (~50× real-time) and **16 real-time streams** — all measurements in [§5 Benchmarks](#benchmarks).
 
    - **Option 1: CPU & macOS (minimal, torch-free)** — RTF ≈ 0.5, no GPU needed
 
@@ -135,7 +136,7 @@ The `vieneu` SDK **defaults to VieNeu-TTS v3 Turbo (48 kHz)**. The minimal insta
 
 ### Quick Start
 
-**CPU (default)** — torch-free, runs v3 Turbo via ONNX Runtime. Most users want this — **RTF ≈ 0.5** on a 12th-gen Core i5 (numbers in [§4 Benchmarks](#benchmarks)):
+**CPU (default)** — torch-free, runs v3 Turbo via ONNX Runtime. Most users want this — **RTF ≈ 0.5** on a 12th-gen Core i5 (numbers in [§5 Benchmarks](#benchmarks)):
 > ⚡**On CPU the backbone runs `fp32` by default** (maximum fidelity). Need more speed? Pass `Vieneu(precision="int8")` — ~1.6× faster (RTF ≈ 0.35) and ~4× smaller, but it requires a CPU with VNNI (AVX-512 VNNI / AVX-VNNI); on older CPUs int8 can produce garbled audio. `precision` only affects the CPU/ONNX path; on GPU it's ignored (PyTorch).
 >
 > 🪶 **Still too slow, or deploying on a phone / ARM board?** Try **[VieNeu-TTS v3 Nano (preview)](#v3-nano)** — `Vieneu(mode="v3nano")`, ~3× faster than Turbo fp32 on CPU (RTF 0.11–0.22 on a desktop CPU), but **noticeably lower quality** (especially English / bilingual), 24 kHz, 11 preset voices + voice cloning. Details and caveats in the [v3 Nano section](#v3-nano) below.
@@ -144,7 +145,7 @@ The `vieneu` SDK **defaults to VieNeu-TTS v3 Turbo (48 kHz)**. The minimal insta
 pip install vieneu
 ```
 
-**GPU (CUDA)** — only if you have an NVIDIA GPU; **~25× faster than the CPU path** (RTF ≈ 0.02 batched, 16 real-time streams — [§4 Benchmarks](#benchmarks)). On Linux `pip install "vieneu[cuda]"` is enough (PyPI torch ships CUDA there); on Windows install the CUDA torch **first** as below.
+**GPU (CUDA)** — only if you have an NVIDIA GPU; **~25× faster than the CPU path** (RTF ≈ 0.02 batched, 16 real-time streams — [§5 Benchmarks](#benchmarks)). On Linux `pip install "vieneu[cuda]"` is enough (PyPI torch ships CUDA there); on Windows install the CUDA torch **first** as below.
 > ⚡ Every audio frame on GPU is **one CUDA graph** (acoustic decoder + sampling +
 > repetition penalty + backbone step in a single replay — no `torch.compile`, no
 > C++ toolchain needed). The first call for each batch size pays ~0.5 s to capture
@@ -334,7 +335,7 @@ wav, sr = vieneu.denoise("noisy.wav", out_path="clean.wav")   # 44.1 kHz mono
 > - **11 preset voices + voice cloning** (`ref_audio`, `add_voice`, `encode_reference` work like Turbo; the three cloning graphs, ~110 MB, download on first use).
 > - **No frame-level streaming** — `infer_stream` yields one finished chunk at a time.
 
-On the same 12th-gen Core i5, Nano runs at **RTF 0.22** (16 steps) or **0.11** (8 steps) against Turbo's 0.62 fp32 / 0.37 int8 — about **3× faster than Turbo fp32**, with a 282 MB download and ~3 s load time. Full table in [§4 Benchmarks](#benchmarks).
+On the same 12th-gen Core i5, Nano runs at **RTF 0.22** (16 steps) or **0.11** (8 steps) against Turbo's 0.62 fp32 / 0.37 int8 — about **3× faster than Turbo fp32**, with a 282 MB download and ~3 s load time. Full table in [§5 Benchmarks](#benchmarks).
 
 ```python
 from vieneu import Vieneu
@@ -353,7 +354,64 @@ Knobs: `steps` (Euler steps, 16 default; 8 ≈ 2× faster, slightly rougher — 
 
 ---
 
-## 🐳 3. API Server & Docker <a name="docker-remote"></a>
+## 📱 3. On-Device iOS SDK (Swift) <a name="ios-sdk"></a>
+
+`VieNeuTTS` is a production-grade native Swift Package (`ios/VieNeuTTS`) delivering **100% on-device offline Vietnamese text-to-speech** for iOS 16.0+ and macOS 14.0+.
+
+- 🎙️ **v3 Turbo (48 kHz Studio Quality)**: 12-layer Autoregressive Transformer + 16-RVQ local acoustic decoder + MOSS Audio Tokenizer. Runs on-device via ONNX Runtime Mobile INT8 with autoreleased tensor drainage per frame, keeping peak RAM flat at ~300 MB (immune to iOS Jetsam memory pressure).
+- ⚡ **v3 Nano (24 kHz Flow Matching)**: Lightweight 48M-parameter flow-matching ODE solver for low-spec devices.
+- 🇻🇳 **Native Vietnamese Phonemization**: C-ABI bridge to Rust `sea-g2p` packaged as a precompiled `SeaG2P.xcframework` with full diacritics and punctuation normalization.
+- 🎭 **37+ Preset Voices Included**: Out-of-the-box support for **Nguyễn Ngọc Ngạn**, **An Nhiên**, **Giang (Podcast)**, **Mai (Tự nhiên)**, **Ngân Nguyễn**, **Quang Tiến**, **Thu Thủy**, **Triệu Dương**, **Hải Đăng**, **Mai Anh**, **Trúc Ly**, and more.
+- 🧬 **Instant Voice Cloning**: Enroll custom voices on-device from a short audio clip ($\ge 1.0$s) with silence trimming and acoustic feature extraction.
+- 📱 **SwiftUI Demo App**: Reference application in `ios/examples/VieNeuTTSDemo` with segmented mode switcher, voice manager, live playback telemetry, and direct USB deployment via `xtool`.
+
+### Swift Quickstart
+
+Add `ios/VieNeuTTS` as a local or remote Swift Package:
+
+```swift
+import VieNeuTTS
+
+// 1. Download or resolve cached v3 Turbo INT8 models
+let downloader = ModelDownloader()
+let provider = try await downloader.downloadTurbo { progress in
+    print("Download: \(Int(progress * 100))%")
+}
+
+// 2. Initialize the synthesis engine
+let config = VieNeuConfig(mode: .v3turbo, modelProvider: provider)
+let tts = try await VieNeuTTS(config: config)
+
+// 3. Load a preset voice (e.g. Nguyễn Ngọc Ngạn)
+let voice = try tts.loadPresetVoice(name: "Nguyễn Ngọc Ngạn")
+
+// 4. Synthesize text to 48 kHz mono AudioBuffer
+let audio = try await tts.synthesize(
+    text: "Anh em nào phải người xa, Cùng chung bác mẹ, một nhà cùng thân.",
+    voice: voice
+)
+
+// 5. Save as 16-bit PCM WAV or play with AVAudioPlayer
+let outputURL = FileManager.default.temporaryDirectory.appendingPathComponent("output.wav")
+try audio.writeWAV(to: outputURL)
+```
+
+### Sentence-by-Sentence Streaming
+
+Stream sentence audio chunks as they finish generating to minimize time-to-first-audio (TTFA):
+
+```swift
+for try await chunk in tts.synthesizeStream(text: longText, voice: voice) {
+    print("Received chunk #\(chunk.index + 1): \(chunk.text)")
+    // Play or buffer chunk.audio immediately
+}
+```
+
+*For complete API documentation, SwiftUI architecture, and XCFramework compilation, see **[ios/README.md](ios/README.md)**.*
+
+---
+
+## 🐳 4. API Server & Docker <a name="docker-remote"></a>
 
 ### Streaming API — OpenAI-compatible (v3 Turbo, CPU or GPU)
 
@@ -489,7 +547,7 @@ tts = Vieneu(mode="v3turbo", backbone_repo="finetune/output/my_voice/merged")
 
 ---
 
-## 📊 4. Benchmarks <a name="benchmarks"></a>
+## 📊 5. Benchmarks <a name="benchmarks"></a>
 
 Every speed and latency number quoted in this README, measured on one machine so they are comparable:
 **RTX 3060 12 GB** · **Intel Core i5 12th gen (6 P-cores, 12 threads)** · Windows 11 · torch 2.8 + cu128 (bf16) · ONNX Runtime 1.24 (fp32/int8, 6 threads) · `vieneu` 3.8.x · September 2026. Reproduce with the snippets in [§2](#sdk) and `examples/openai_speech_client.py --bench N`.
@@ -524,7 +582,7 @@ Streams ≠ users: a stream lives only while a reply plays, so 16 streams ≈ 45
 
 ---
 
-## 🎓 5. Fine-tuning (LoRA) <a name="finetune"></a>
+## 🎓 6. Fine-tuning (LoRA) <a name="finetune"></a>
 
 v3 Turbo already clones a voice from a clip of a few seconds. Fine-tune with **LoRA** when you need a tighter match than cloning, a specific reading style (storytelling, news, narration…), or better reading on your own domain. A LoRA teaches **one voice**: about **10–30 minutes** of clean audio from one speaker (one LoRA per voice if you need several). Only a few million parameters are trained, so a ~6 GB GPU is enough.
 
@@ -544,9 +602,9 @@ The merged model speaks that one voice from its packed speaker embedding (no ref
 
 ---
 
-## 🔬 6. Model Overview <a name="backbones"></a>
+## 🔬 7. Model Overview <a name="backbones"></a>
 
-| Model | Status | Format | Device | Bilingual | Features | Speed ([§4](#benchmarks)) |
+| Model | Status | Format | Device | Bilingual | Features | Speed ([§5](#benchmarks)) |
 |---|---|---|---|---|---|---|
 | **VieNeu-TTS-v3** | 🔜 **Coming soon** | PyTorch | **GPU** | ✅ | ? | ? |
 | **VieNeu-TTS-v3-Turbo** *(default)* | 🦜 **Current** | PyTorch/ONNX | **GPU/CPU** | ✅ | **48 kHz, 25 preset voices, Cloning, Emotion cues, Conversation, Streaming (OpenAI-compatible API)** | **Ultra Fast** — GPU: RTF ≈ 0.02 batched, 16 real-time streams; CPU: RTF ≈ 0.5 (int8 0.35) |
@@ -560,18 +618,19 @@ The merged model speaks that one voice from its packed speaker embedding (no ref
 
 ---
 
-## 🚀 7. Roadmap <a name="roadmap"></a>
+## 🚀 8. Roadmap <a name="roadmap"></a>
 
 - [x] **VieNeu-TTS v3 Turbo** *(on-device, personal use)*: from-scratch 48 kHz architecture — preset voices, instant voice cloning, emotion cues, batched generation, multi-speaker conversation, frame-level streaming; torch-free on CPU.
 - [x] **VieNeu-TTS v3 Nano** *(preview)*: 48M flow-matching model for weak CPUs / edge devices — 11 preset voices + cloning, torch-free.
 - [x] **LoRA fine-tuning** for v3 Turbo — train your own voice or reading style on one consumer GPU.
 - [x] **VieNeu-TTS v3 Turbo GPU streaming server**: OpenAI-compatible `/v1/audio/speech` with continuous batching on one CUDA graph — first audio ~115 ms, 16 concurrent streams on an RTX 3060, Docker profiles `api-gpu` / `api-cpu` ([docs/streaming.md](docs/streaming.md)).
+- [x] **iOS SDK (Swift Package Manager)**: 100% on-device offline v3 Turbo (48 kHz) & v3 Nano (24 kHz) with instant voice cloning, 37+ preset voices, and sentence streaming ([ios/README.md](ios/README.md)).
 - [ ] **VieNeu-TTS v3 (GPU, server release)**: the full v3 model for API / server deployment — finalized quality, stable emotion control, more voices.
-- [ ] **Mobile SDK**: official Android / iOS deployment.
+- [ ] **Android SDK**: official Android / ONNX deployment.
 
 ---
 
-## 🤝 8. Support & Contact <a name="support"></a>
+## 🤝 9. Support & Contact <a name="support"></a>
 
 - **Hugging Face:** [pnnbao-ump](https://huggingface.co/pnnbao-ump)
 - **Discord:** [Join our community](https://discord.gg/yJt8kzjzWZ)
@@ -579,7 +638,7 @@ The merged model speaks that one voice from its packed speaker embedding (no ref
 - **License:** Apache 2.0 (Free to use).
 
 ---
-## 📑 9. Citation <a name="citation"></a>
+## 📑 10. Citation <a name="citation"></a>
 
 ```bibtex
 @misc{vieneutts2026,

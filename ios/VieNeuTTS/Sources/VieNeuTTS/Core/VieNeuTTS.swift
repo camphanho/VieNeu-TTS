@@ -310,7 +310,16 @@ public actor VieNeuTTS {
         )
 
         let samples = try await engine.runCodecDecoder(latents: latents)
-        return AudioBuffer(samples: samples, sampleRate: 24000)
+        var clampedSamples = samples.map { max(-1.0, min(1.0, $0)) }
+        let fadeSamples = min(120, clampedSamples.count / 2)
+        if fadeSamples > 0 {
+            for i in 0..<fadeSamples {
+                let ramp = 0.5 - 0.5 * cos(Float.pi * Float(i) / Float(fadeSamples))
+                clampedSamples[i] *= ramp
+                clampedSamples[clampedSamples.count - 1 - i] *= ramp
+            }
+        }
+        return AudioBuffer(samples: clampedSamples, sampleRate: 24000)
     }
 }
 

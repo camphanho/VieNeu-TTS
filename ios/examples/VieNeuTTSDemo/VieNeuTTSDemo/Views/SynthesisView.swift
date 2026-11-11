@@ -6,14 +6,14 @@ import VieNeuTTS
 public struct SynthesisView: View {
     @ObservedObject public var viewModel: TTSViewModel
 
-    @State private var inputText: String = "Xin chào! Tôi là mô hình VieNeu-TTS v3 Nano chạy trực tiếp trên thiết bị Apple."
+    @State private var inputText: String = "Xin chào quý vị và các bạn, tôi là mô hình giọng đọc tiếng Việt chạy trực tiếp trên thiết bị."
     @FocusState private var isTextEditorFocused: Bool
 
     private let sampleSentences = [
-        "Xin chào! Tôi là mô hình VieNeu-TTS v3 Nano chạy trực tiếp trên thiết bị Apple.",
-        "Hôm nay thời tiết thế nào? Bạn có kế hoạch gì chưa?",
-        "Hệ thống trí tuệ nhân tạo tạo giọng nói tiếng Việt tự nhiên và truyền cảm.",
-        "Công nghệ Flow-Matching giúp tạo âm thanh chất lượng cao với tốc độ siêu nhanh."
+        "Xin chào quý vị và các bạn, tôi là mô hình giọng đọc tiếng Việt chạy trực tiếp trên thiết bị.",
+        "Hôm nay thời tiết ở thủ đô Hà Nội rất đẹp, trời nắng nhẹ và mát mẻ.",
+        "Trí tuệ nhân tạo đang thay đổi cách chúng ta học tập và làm việc mỗi ngày.",
+        "Hệ thống tổng hợp giọng nói tiếng Việt tự nhiên và mượt mà trên iPhone."
     ]
 
     public init(viewModel: TTSViewModel) {

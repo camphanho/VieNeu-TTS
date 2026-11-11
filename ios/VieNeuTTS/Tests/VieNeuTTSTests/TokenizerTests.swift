@@ -160,4 +160,14 @@ final class TokenizerTests: XCTestCase {
         let ids = tokenizer.encode(phonemes: phonemes)
         XCTAssertEqual(ids, [1, 31, 63, 2])
     }
+
+    func testComparePythonExactMatch() {
+        let tokenizer = PhonemeTokenizer()
+        let p = "sˈin tʃˈaː2w! t̪ˈoj lˌaː2 mˈo hˈi2ɲ vˈaɪ nˈuː tˈiː tˈiː ˈɛs tʃˈa6j tʃˈy6c t̪ˈiɛɜp tʃˈen ˈaɪ fˈoʊn."
+        let ids = tokenizer.encode(phonemes: p)
+        print(">>> SWIFT TOKENIZER IDS COUNT:", ids.count)
+        print(">>> SWIFT TOKENIZER IDS:", ids)
+        let expected: [Int64] = [1, 30, 60, 22, 27, 3, 31, 55, 60, 15, 62, 9, 34, 4, 3, 31, 63, 60, 28, 23, 3, 25, 61, 15, 62, 9, 3, 26, 60, 28, 3, 21, 60, 22, 9, 52, 3, 33, 60, 15, 51, 3, 27, 60, 32, 62, 3, 31, 60, 22, 62, 3, 31, 60, 22, 62, 3, 60, 47, 30, 3, 31, 55, 60, 15, 12, 23, 3, 31, 55, 60, 36, 12, 17, 3, 31, 63, 60, 22, 47, 48, 29, 3, 31, 55, 60, 19, 27, 3, 60, 15, 51, 3, 20, 60, 28, 56, 27, 7, 2]
+        XCTAssertEqual(ids, expected)
+    }
 }

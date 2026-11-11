@@ -33,8 +33,9 @@ public struct Chunker {
     /// - Parameters:
     ///   - text: The input raw text.
     ///   - maxChars: Maximum character limit per chunk (default: 200).
+    ///   - minChunkChars: Minimum character threshold below which short sentences are merged (default: 0).
     /// - Returns: An array of `SentenceChunk` structs. Returns empty array for empty or whitespace-only inputs.
-    public static func splitToChunks(_ text: String, maxChars: Int = 200) -> [SentenceChunk] {
+    public static func splitToChunks(_ text: String, maxChars: Int = 200, minChunkChars: Int = 0) -> [SentenceChunk] {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             return []
@@ -101,7 +102,42 @@ public struct Chunker {
             }
         }
 
-        return resultChunks
+        return mergeShortChunks(resultChunks, minChars: minChunkChars)
+    }
+
+    /// Merges overly short chunks (< minChars) into adjacent chunks to ensure the neural model
+    /// has sufficient context, matching Python's `_merge_short_chunks`.
+    private static func mergeShortChunks(_ chunks: [SentenceChunk], minChars: Int) -> [SentenceChunk] {
+        guard chunks.count > 1, minChars > 0 else { return chunks }
+        var list = chunks
+
+        var iterations = 0
+        while list.count > 1 && iterations < 50 {
+            iterations += 1
+            guard let shortIndex = list.indices.first(where: { list[$0].text.count < minChars }) else {
+                break
+            }
+
+            if shortIndex < list.count - 1 {
+                let curr = list[shortIndex]
+                let next = list.remove(at: shortIndex + 1)
+                list[shortIndex] = SentenceChunk(
+                    text: "\(curr.text) \(next.text)",
+                    pauseDuration: next.pauseDuration
+                )
+            } else if shortIndex > 0 {
+                let prev = list[shortIndex - 1]
+                let curr = list.remove(at: shortIndex)
+                list[shortIndex - 1] = SentenceChunk(
+                    text: "\(prev.text) \(curr.text)",
+                    pauseDuration: curr.pauseDuration
+                )
+            } else {
+                break
+            }
+        }
+
+        return list
     }
 
     /// Splits a single paragraph into individual sentences while respecting quotes and decimal numbers.

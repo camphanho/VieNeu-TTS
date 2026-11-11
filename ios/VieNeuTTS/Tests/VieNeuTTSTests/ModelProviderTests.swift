@@ -270,4 +270,18 @@ final class ModelProviderTests: XCTestCase {
         XCTAssertTrue(ModelDownloader.turboRequiredFiles.contains("moss_audio_tokenizer_decode_full.onnx"))
         XCTAssertEqual(VieNeuConfig.mock(mode: .v3turbo).mode, .v3turbo)
     }
+
+    func testParseNPZFromRealConstantsFile() throws {
+        let npzPath = "/home/camph/.cache/huggingface/hub/models--pnnbao-ump--VieNeu-TTS-v3-Nano/snapshots/aba295eb96a6fa6003ebe417cc1f2802a7adc1dc/constants.npz"
+        guard FileManager.default.fileExists(atPath: npzPath) else { return }
+        let data = try Data(contentsOf: URL(fileURLWithPath: npzPath))
+        let constants = ModelConstants.parseNPZ(data: data)
+        XCTAssertNotNil(constants)
+        XCTAssertEqual(constants?.null_spk.count, 192)
+        XCTAssertEqual(constants?.null_style.count, 50)
+        XCTAssertEqual(constants?.null_style[0].count, 256)
+        XCTAssertEqual(constants?.latent_mean.count, 24)
+        XCTAssertEqual(constants?.latent_std.count, 24)
+        XCTAssertEqual(constants?.latent_scale, 0.25)
+    }
 }
